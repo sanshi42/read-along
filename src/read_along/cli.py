@@ -66,5 +66,10 @@ def serve(
         console.print(f"[red]Read Along server startup failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
 
+    # Initialize app state (storage paths, database, repository) before serving
+    from read_along.api import init_app_state
+    app_state = init_app_state()
+    console.print(f"[dim]Data directory: {app_state.storage_paths.home}[/dim]")
+
     console.print(f"[cyan]Starting Read Along API:[/cyan] http://{host}:{port}")
     uvicorn.run("read_along.api:app", host=host, port=port, reload=reload)

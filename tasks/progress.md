@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-项目已进入 MVP Sprint 1 的数据模型收尾阶段。`MVP-001` `MVP-002` `MVP-003` 均已完成。核心阅读数据已有正式 DTO、完整 repository 和确定性内容 ID 生成。Sprint 1 的下一个目标是 `MVP-004` PDF 导入。
+项目已进入 MVP Sprint 1 的 PDF 导入阶段。`MVP-001` `MVP-002` `MVP-003` `MVP-004` 均已完成。PDF 上传、PyMuPDF 文本提取、段落/句子结构化导入的完整流程已打通。Sprint 1 的下一个目标是 `MVP-005` 文本结构化。
 
 ## 已完成
 
@@ -19,18 +19,19 @@
 | 006 | 核心数据 Repository 基线 | Done | 材料、段落、句子和阅读进度的持久化读写与顺序查询 |
 | 007 | 核心数据模型 DTO | Done | 核心 Pydantic DTO、状态枚举、材料详情嵌套结构、repository 类型返回 |
 | 008 | 稳定内容 ID 生成 | Done | `ids.py` 确定性 ID 生成、material/paragraph/sentence ID、21 个自动测试 |
+| 009 | PDF 导入 | Done | `extractors.py` 文本提取与切分、`importers.py` PDF 导入流程、`POST /api/import/pdf`、29 个测试 |
 
 ## 当前任务
 
-无。`008-stable-content-ids` 已完成。
+无。`009-pdf-import` 已完成。
 
 ## 下一步
 
-`MVP-003` 数据模型已完整收尾。建议继续 Sprint 1 的下一个最小任务：
+`MVP-004` PDF 导入已完成。建议继续 Sprint 1 的下一个最小任务：
 
-1. `009-pdf-import`：实现文本型 PDF 上传、PyMuPDF 文本提取和段落/句子结构化导入流程。
+1. `010-text-structuring`：实现通用文本结构化——改进段落检测、噪声清理、句子边界检测，为 URL 导入做准备。
 
-推荐先完成 `009-pdf-import`，它依赖 MVP-001、MVP-003 的数据模型和 ID 生成，是 Sprint 1 从存储模型通向第一个用户可见功能的自然下一步。
+推荐先完成 `010-text-structuring`，它依赖 MVP-003 数据模型，是 Sprint 1 从 PDF 导入通向通用文本导入的桥梁。
 
 ## 阻塞项
 
@@ -38,6 +39,7 @@
 
 ## 最近变更记录
 
+- 2026-06-07：完成 PDF 导入，新增 `extractors.py`（文本清洗、段落/句子切分、PDF 页文本提取）、`importers.py`（PDF 导入流程）、`POST /api/import/pdf` API 端点，29 个测试，ruff+mypy 全部通过。
 - 2026-06-07：完成稳定内容 ID 生成，新增 `ids.py` 提供材料/段落/句子的确定性 ID 生成函数，覆盖 21 个测试。
 - 2026-06-06：完成核心数据模型 DTO，新增状态枚举和材料详情嵌套结构，并让 repository 读取结果返回正式模型。
 - 2026-06-06：完成核心数据 repository，支持材料、段落、句子和阅读进度的持久化读写、顺序查询与进度覆盖更新。
@@ -56,7 +58,7 @@
 
 ## 维护规则
 
-- 每完成一个任务，都必须更新“已完成”“当前任务”“下一步”和“最近变更记录”。
-- 如果任务未完成，必须在“当前任务”或“阻塞项”说明原因。
+- 每完成一个任务，都必须更新"已完成""当前任务""下一步"和"最近变更记录"。
+- 如果任务未完成，必须在"当前任务"或"阻塞项"说明原因。
 - 如果创建新任务，必须先创建对应的 `tasks/<task-id>/task-spec.md`。
 - 如果 backlog 状态变化，需要同步更新 `docs/product-backlog.md`。
