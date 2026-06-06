@@ -86,3 +86,17 @@ tasks/002-sqlite-storage/task-spec.md
 - 代码任务必须有合适的测试或明确说明无法自动测试的原因。
 - 前端任务完成后需要能在浏览器中验证主要交互。
 - 不要把未完成项描述为完成；未完成内容写入 `tasks/progress.md` 的下一步或阻塞项。
+
+## Agent skills
+
+### Issue tracker
+
+Issue 和 PRD 使用 GitHub 仓库 `sanshi42/read-along` 管理。详见 `docs/agents/issue-tracker.md`。
+
+### Triage 标签
+
+使用五个默认 triage 标签。详见 `docs/agents/triage-labels.md`。
+
+### 领域文档
+
+本仓库采用 single-context 布局。详见 `docs/agents/domain.md`。
