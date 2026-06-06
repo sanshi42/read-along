@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-项目已进入 MVP Sprint 1 的后端基础阶段。`MVP-001` 本地 FastAPI 服务骨架可通过顶层 CLI 启动；本地数据目录、存储路径和 SQLite schema 已建立，可继续实现最小 repository。
+项目已进入 MVP Sprint 1 的后端基础阶段。`MVP-001` 本地 FastAPI 服务和 `MVP-002` 本地存储已完成；核心阅读数据可通过 repository 持久化读写，可继续建立最小数据模型。
 
 ## 已完成
 
@@ -16,19 +16,19 @@
 | 003 | GitHub 提交前检查 | Done | 规范化 `AGENTS.md`、修复 Chrome 正文候选选择、验证项目基线 |
 | 004 | 配置与本地存储路径 | Done | `READ_ALONG_HOME` 配置、默认数据目录、SQLite/上传/音频/日志路径 |
 | 005 | SQLite schema 初始化 | Done | SQLite 连接、五张核心表、索引、外键和幂等初始化 |
+| 006 | 核心数据 Repository 基线 | Done | 材料、段落、句子和阅读进度的持久化读写与顺序查询 |
 
 ## 当前任务
 
-无。`005-sqlite-schema-init` 已完成。
+无。`006-repository-baseline` 已完成。
 
 ## 下一步
 
 建议继续 Sprint 1 后端基础的下一个最小任务：
 
-1. `006-repository-baseline`：建立材料、段落、句子和进度的最小 repository。
-2. `007-data-model-dtos`：建立与 repository 和后续 API 对齐的最小数据模型。
+1. `007-data-model-dtos`：建立与 repository 和后续材料详情 API 对齐的最小数据模型。
 
-推荐下一步先做 `006-repository-baseline`，继续推进并完成 `MVP-002` 的持久化读写闭环。
+推荐下一步先做 `007-data-model-dtos`，开始推进 `MVP-003`，并保持 API 实现为后续独立任务。
 
 ## 阻塞项
 
@@ -36,6 +36,7 @@
 
 ## 最近变更记录
 
+- 2026-06-06：完成核心数据 repository，支持材料、段落、句子和阅读进度的持久化读写、顺序查询与进度覆盖更新。
 - 2026-06-06：完成 SQLite schema 初始化，新增五张核心表、必要索引、外键约束、级联删除和持久化测试。
 - 2026-06-06：完成本地数据目录配置和存储路径布局，支持 `READ_ALONG_HOME` 覆盖，并新增目录创建测试。
 - 2026-06-06：将项目级规则文件规范化为 `AGENTS.md`，并完成首次 GitHub 提交前检查。
