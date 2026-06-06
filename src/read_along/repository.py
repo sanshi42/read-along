@@ -3,22 +3,28 @@ from __future__ import annotations
 import sqlite3
 from contextlib import closing
 from pathlib import Path
-from typing import Any
+from typing import TypeVar
+
+from pydantic import BaseModel
 
 from read_along.db import connect_database
+from read_along.models import Material, Paragraph, ReadingProgress, Sentence
 
 
-RowData = dict[str, Any]
+ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
-def _row_data(row: sqlite3.Row | None) -> RowData | None:
+def _row_model(row: sqlite3.Row | None, model: type[ModelT]) -> ModelT | None:
     if row is None:
         return None
-    return {key: row[key] for key in row.keys()}
+    return model.model_validate({key: row[key] for key in row.keys()})
 
 
-def _rows_data(rows: list[sqlite3.Row]) -> list[RowData]:
-    return [{key: row[key] for key in row.keys()} for row in rows]
+def _rows_model(rows: list[sqlite3.Row], model: type[ModelT]) -> list[ModelT]:
+    return [
+        model.model_validate({key: row[key] for key in row.keys()})
+        for row in rows
+    ]
 
 
 class Repository:
@@ -67,15 +73,15 @@ class Repository:
             )
             connection.commit()
 
-    def get_material(self, material_id: str) -> RowData | None:
+    def get_material(self, material_id: str) -> Material | None:
         with closing(connect_database(self.database)) as connection:
             row = connection.execute(
                 "SELECT * FROM materials WHERE id = ?",
                 (material_id,),
             ).fetchone()
-        return _row_data(row)
+        return _row_model(row, Material)
 
-    def list_materials(self) -> list[RowData]:
+    def list_materials(self) -> list[Material]:
         with closing(connect_database(self.database)) as connection:
             rows = connection.execute(
                 """
@@ -84,7 +90,7 @@ class Repository:
                 ORDER BY updated_at DESC, created_at DESC, id ASC
                 """
             ).fetchall()
-        return _rows_data(rows)
+        return _rows_model(rows, Material)
 
     def add_paragraph(
         self,
@@ -105,7 +111,7 @@ class Repository:
             )
             connection.commit()
 
-    def list_paragraphs(self, material_id: str) -> list[RowData]:
+    def list_paragraphs(self, material_id: str) -> list[Paragraph]:
         with closing(connect_database(self.database)) as connection:
             rows = connection.execute(
                 """
@@ -116,7 +122,7 @@ class Repository:
                 """,
                 (material_id,),
             ).fetchall()
-        return _rows_data(rows)
+        return _rows_model(rows, Paragraph)
 
     def add_sentence(
         self,
@@ -157,7 +163,7 @@ class Repository:
             )
             connection.commit()
 
-    def list_sentences(self, material_id: str) -> list[RowData]:
+    def list_sentences(self, material_id: str) -> list[Sentence]:
         with closing(connect_database(self.database)) as connection:
             rows = connection.execute(
                 """
@@ -168,7 +174,7 @@ class Repository:
                 """,
                 (material_id,),
             ).fetchall()
-        return _rows_data(rows)
+        return _rows_model(rows, Sentence)
 
     def save_progress(
         self,
@@ -196,10 +202,10 @@ class Repository:
             )
             connection.commit()
 
-    def get_progress(self, material_id: str) -> RowData | None:
+    def get_progress(self, material_id: str) -> ReadingProgress | None:
         with closing(connect_database(self.database)) as connection:
             row = connection.execute(
                 "SELECT * FROM reading_progress WHERE material_id = ?",
                 (material_id,),
             ).fetchone()
-        return _row_data(row)
+        return _row_model(row, ReadingProgress)

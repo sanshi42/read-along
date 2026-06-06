@@ -2,6 +2,7 @@ from pathlib import Path
 
 from read_along.config import AppConfig
 from read_along.db import initialize_database
+from read_along.models import Material, Paragraph, ReadingProgress, Sentence
 from read_along.repository import Repository
 from read_along.storage import StoragePaths
 
@@ -76,8 +77,9 @@ def test_materials_persist_and_list_most_recent_first(tmp_path: Path) -> None:
 
     material = reopened_repo.get_material("mat-older")
     assert material is not None
-    assert material["title"] == "Material mat-older"
-    assert [row["id"] for row in reopened_repo.list_materials()] == [
+    assert isinstance(material, Material)
+    assert material.title == "Material mat-older"
+    assert [row.id for row in reopened_repo.list_materials()] == [
         "mat-newer",
         "mat-older",
     ]
@@ -112,11 +114,16 @@ def test_paragraphs_and_sentences_are_read_in_index_order(tmp_path: Path) -> Non
 
     reopened_repo = Repository(repo.database)
 
-    assert [row["id"] for row in reopened_repo.list_paragraphs("mat-1")] == [
+    paragraphs = reopened_repo.list_paragraphs("mat-1")
+    sentences = reopened_repo.list_sentences("mat-1")
+
+    assert all(isinstance(paragraph, Paragraph) for paragraph in paragraphs)
+    assert all(isinstance(sentence, Sentence) for sentence in sentences)
+    assert [paragraph.id for paragraph in paragraphs] == [
         "paragraph-1",
         "paragraph-2",
     ]
-    assert [row["id"] for row in reopened_repo.list_sentences("mat-1")] == [
+    assert [sentence.id for sentence in sentences] == [
         "sentence-1",
         "sentence-2",
     ]
@@ -157,9 +164,8 @@ def test_save_progress_inserts_and_updates_single_material_progress(
     )
 
     progress = Repository(repo.database).get_progress("mat-1")
-    assert progress == {
-        "material_id": "mat-1",
-        "sentence_id": "sentence-2",
-        "playback_rate": 1.25,
-        "updated_at": "2026-06-06T02:00:00Z",
-    }
+    assert isinstance(progress, ReadingProgress)
+    assert progress.material_id == "mat-1"
+    assert progress.sentence_id == "sentence-2"
+    assert progress.playback_rate == 1.25
+    assert progress.updated_at.isoformat() == "2026-06-06T02:00:00+00:00"
