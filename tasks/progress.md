@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-项目已进入 MVP Sprint 1 的后端基础阶段。产品和工程已统一命名为 Read Along，旧学习笔记功能已删除；`MVP-001` 本地 FastAPI 服务骨架可通过顶层 CLI 启动。仓库已完成首次 GitHub 提交前检查。
+项目已进入 MVP Sprint 1 的后端基础阶段。`MVP-001` 本地 FastAPI 服务骨架可通过顶层 CLI 启动；本地数据目录、存储路径和 SQLite schema 已建立，可继续实现最小 repository。
 
 ## 已完成
 
@@ -14,20 +14,21 @@
 | 001 | Read Along 后端服务骨架 | Done | `src/read_along/`、`read-along serve`、`GET /api/health`、`tasks/001-reader-service-skeleton/task-spec.md` |
 | 002 | 统一为 Read Along | Done | 全仓库改名、扁平 Python 包、旧功能清理、得到来源适配器 |
 | 003 | GitHub 提交前检查 | Done | 规范化 `AGENTS.md`、修复 Chrome 正文候选选择、验证项目基线 |
+| 004 | 配置与本地存储路径 | Done | `READ_ALONG_HOME` 配置、默认数据目录、SQLite/上传/音频/日志路径 |
+| 005 | SQLite schema 初始化 | Done | SQLite 连接、五张核心表、索引、外键和幂等初始化 |
 
 ## 当前任务
 
-无。`003-github-readiness` 已完成。
+无。`005-sqlite-schema-init` 已完成。
 
 ## 下一步
 
 建议继续 Sprint 1 后端基础的下一个最小任务：
 
-1. `004-config-and-storage-paths`：建立本地数据目录配置，默认 `~/.local/share/read-along/`，支持 `READ_ALONG_HOME` 覆盖。
-2. `005-sqlite-schema-init`：初始化 SQLite schema。
-3. `006-repository-baseline`：建立材料、段落、句子和进度的最小 repository。
+1. `006-repository-baseline`：建立材料、段落、句子和进度的最小 repository。
+2. `007-data-model-dtos`：建立与 repository 和后续 API 对齐的最小数据模型。
 
-推荐下一步先做 `004-config-and-storage-paths`，作为 `MVP-002` 的前置小任务。
+推荐下一步先做 `006-repository-baseline`，继续推进并完成 `MVP-002` 的持久化读写闭环。
 
 ## 阻塞项
 
@@ -35,6 +36,8 @@
 
 ## 最近变更记录
 
+- 2026-06-06：完成 SQLite schema 初始化，新增五张核心表、必要索引、外键约束、级联删除和持久化测试。
+- 2026-06-06：完成本地数据目录配置和存储路径布局，支持 `READ_ALONG_HOME` 覆盖，并新增目录创建测试。
 - 2026-06-06：将项目级规则文件规范化为 `AGENTS.md`，并完成首次 GitHub 提交前检查。
 - 2026-06-06：修复 Chrome 页面正文候选总被整页 `body` 覆盖的问题，并新增回归测试。
 - 2026-06-06：项目统一改名为 Read Along；包结构扁平化为 `src/read_along/`；CLI 改为 `read-along serve`。
