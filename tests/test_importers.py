@@ -54,7 +54,7 @@ class TestImportPdf:
 
         para = result.paragraphs[0]
         assert para.index == 1
-        assert para.source_label == "Page 1"
+        assert para.source_label == "Page 1, Block 1"
         assert para.sentences
         assert len(para.sentences) == 2
         assert para.sentences[0].text == "Hello world."
@@ -83,8 +83,8 @@ class TestImportPdf:
         )
 
         assert len(result.paragraphs) == 2
-        assert result.paragraphs[0].source_label == "Page 1"
-        assert result.paragraphs[1].source_label == "Page 2"
+        assert result.paragraphs[0].source_label == "Page 1, Block 1"
+        assert result.paragraphs[1].source_label == "Page 2, Block 1"
         assert "Page one." in result.paragraphs[0].text
         assert "Page two." in result.paragraphs[1].text
 
@@ -163,3 +163,54 @@ class TestImportPdf:
         )
 
         assert result1.id == result2.id
+
+    def test_sentences_extracted_in_order(self, tmp_path: Path) -> None:
+        """Multiple text blocks on a page should produce sentences in order."""
+        file_path = tmp_path / "ordered.pdf"
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((50, 50), "First sentence.", fontsize=12)
+        page.insert_text((50, 80), "Second sentence.", fontsize=12)
+        doc.save(str(file_path))
+        doc.close()
+
+        repo, uploads_dir = _repo_and_uploads(tmp_path)
+
+        result = import_pdf(
+            file_path=file_path,
+            filename="ordered.pdf",
+            repo=repo,
+            uploads_dir=uploads_dir,
+        )
+
+        # Sentences should be in order
+        all_sentences = [s.text for p in result.paragraphs for s in p.sentences]
+        assert "First sentence." in all_sentences
+        assert "Second sentence." in all_sentences
+
+
+    def test_noise_lines_filtered(self, tmp_path: Path) -> None:
+        """Noise lines like '上一篇' should be filtered from the imported text."""
+        file_path = tmp_path / "noise.pdf"
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((50, 50), "Real content.", fontsize=12)
+        page.insert_text((50, 70), "上一篇", fontsize=12)
+        page.insert_text((50, 90), "More content.", fontsize=12)
+        doc.save(str(file_path))
+        doc.close()
+
+        repo, uploads_dir = _repo_and_uploads(tmp_path)
+
+        result = import_pdf(
+            file_path=file_path,
+            filename="noise.pdf",
+            repo=repo,
+            uploads_dir=uploads_dir,
+        )
+
+        # Should have filtered out "上一篇"
+        all_text = " ".join(s.text for p in result.paragraphs for s in p.sentences)
+        assert "上一篇" not in all_text
+        assert "Real content." in all_text
+        assert "More content." in all_text
