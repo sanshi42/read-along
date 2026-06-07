@@ -11,6 +11,7 @@ from read_along.storage import StoragePaths
 
 EXPECTED_TABLES = {
     "import_jobs",
+    "material_sources",
     "materials",
     "paragraphs",
     "reading_progress",
@@ -25,17 +26,13 @@ def storage_paths(tmp_path: Path) -> StoragePaths:
 def insert_material(connection: sqlite3.Connection, material_id: str = "mat-1") -> None:
     connection.execute(
         """
-        INSERT INTO materials (
-            id, source_type, source_uri, title, status, content_hash, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO materials (id, title, content_hash, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
         """,
         (
             material_id,
-            "pdf",
-            "example.pdf",
             "Example",
-            "ready",
-            "hash-1",
+            f"hash-{material_id}",
             "2026-06-06T00:00:00Z",
             "2026-06-06T00:00:00Z",
         ),
@@ -146,6 +143,22 @@ def test_deleting_material_cascades_to_reading_content_and_progress(
         insert_material(connection)
         connection.execute(
             """
+            INSERT INTO material_sources (
+                id, material_id, source_type, source_key, source_uri, is_primary, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "source-1",
+                "mat-1",
+                "pdf",
+                "source-key",
+                "example.pdf",
+                1,
+                "2026-06-06T00:00:00Z",
+            ),
+        )
+        connection.execute(
+            """
             INSERT INTO paragraphs (id, material_id, "index", text)
             VALUES (?, ?, ?, ?)
             """,
@@ -172,7 +185,12 @@ def test_deleting_material_cascades_to_reading_content_and_progress(
 
         counts = {
             table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in ("paragraphs", "sentences", "reading_progress")
+            for table in ("material_sources", "paragraphs", "sentences", "reading_progress")
         }
 
-    assert counts == {"paragraphs": 0, "sentences": 0, "reading_progress": 0}
+    assert counts == {
+        "material_sources": 0,
+        "paragraphs": 0,
+        "sentences": 0,
+        "reading_progress": 0,
+    }

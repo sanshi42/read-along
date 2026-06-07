@@ -3,15 +3,16 @@ from __future__ import annotations
 import hashlib
 
 
-def generate_material_id(source_type: str, source_uri: str) -> str:
-    """根据来源类型和 URI 生成稳定的材料 ID。
+def generate_material_id(content_hash: str) -> str:
+    """根据结构化正文哈希生成稳定的材料 ID。"""
+    return f"mat_{content_hash[:16]}"
 
-    ID 具有确定性：相同的 (source_type, source_uri) 始终生成相同的材料 ID，
-    因此可以在开始提取内容前安全计算。
-    """
-    key = f"{source_type}\x00{source_uri}"
-    digest = hashlib.sha256(key.encode()).hexdigest()[:8]
-    return f"mat_{digest}"
+
+def generate_source_id(source_type: str, source_key: str) -> str:
+    """根据来源类型和稳定来源键生成来源身份 ID。"""
+    key = f"{source_type}\x00{source_key}"
+    digest = hashlib.sha256(key.encode()).hexdigest()[:16]
+    return f"src_{digest}"
 
 
 def generate_paragraph_id(material_id: str, index: int) -> str:

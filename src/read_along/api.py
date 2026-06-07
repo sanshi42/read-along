@@ -11,14 +11,18 @@ from read_along import __version__
 from read_along.config import load_config
 from read_along.db import initialize_database
 from read_along.importers import import_pdf
-from read_along.repository import Repository
+from read_along.material_library import InvalidDraftError, MaterialLibrary
 from read_along.storage import StoragePaths
 
 
 class AppState:
-    def __init__(self, storage_paths: StoragePaths, repository: Repository) -> None:
+    def __init__(
+        self,
+        storage_paths: StoragePaths,
+        material_library: MaterialLibrary,
+    ) -> None:
         self.storage_paths = storage_paths
-        self.repository = repository
+        self.material_library = material_library
 
 
 # 应用使用前由 cli.py 设置的全局状态
@@ -33,8 +37,11 @@ def init_app_state() -> AppState:
     storage_paths = StoragePaths.from_config(config)
     storage_paths.ensure_directories()
     initialize_database(storage_paths)
-    repository = Repository(storage_paths.database)
-    _state = AppState(storage_paths=storage_paths, repository=repository)
+    material_library = MaterialLibrary(storage_paths)
+    _state = AppState(
+        storage_paths=storage_paths,
+        material_library=material_library,
+    )
     return _state
 
 
@@ -44,10 +51,10 @@ def get_storage_paths() -> StoragePaths:
     return state.storage_paths
 
 
-def get_repository() -> Repository:
+def get_material_library() -> MaterialLibrary:
     state = _state
     assert state is not None, "应用状态尚未初始化"
-    return state.repository
+    return state.material_library
 
 
 def create_app() -> FastAPI:
@@ -67,8 +74,7 @@ def create_app() -> FastAPI:
     async def import_pdf_endpoint(
         file: UploadFile,
         *,
-        repo: Repository = Depends(get_repository),
-        storage_paths: StoragePaths = Depends(get_storage_paths),
+        library: MaterialLibrary = Depends(get_material_library),
     ) -> Any:
         """上传文本型 PDF 并将其导入为阅读材料。"""
         if file.filename is None or not file.filename.lower().endswith(".pdf"):
@@ -88,11 +94,10 @@ def create_app() -> FastAPI:
             result = import_pdf(
                 file_path=tmp_path,
                 filename=file.filename,
-                repo=repo,
-                uploads_dir=storage_paths.uploads,
+                library=library,
             )
             return result.model_dump(mode="json")
-        except ValueError as exc:
+        except (InvalidDraftError, ValueError) as exc:
             return JSONResponse(
                 status_code=422,
                 content={"detail": str(exc)},

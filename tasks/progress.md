@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-项目已进入 MVP Sprint 1 收尾阶段。`MVP-001` ~ `MVP-005` 均已完成。材料库持久化 Module 的架构设计已收敛；下一步应先实现该设计，再继续 `MVP-006` 前端骨架，避免前端依赖即将替换的细粒度 Repository Interface。
+项目已进入 MVP Sprint 1 收尾阶段。`MVP-001` ~ `MVP-005` 均已完成，材料库持久化 Module 已落地。下一步继续 `MVP-006` 前端骨架，前端可直接依赖稳定的材料库视图和后续 API。
 
 ## 已完成
 
@@ -23,23 +23,26 @@
 | 010 | 文本结构化 | Done | 增强 `extractors.py`（噪声清洗、长句切分、噪声过滤）、`structure_text` 管线、改进段落检测、21 个新测试 |
 | 011 | 深化材料库持久化 Module 设计 | Done | `CONTEXT.md`、材料库 Interface、多来源身份、稳定来源键、原子保存与错误语义、技术方案更新 |
 | 012 | 统一代码与测试说明文本为中文 | Done | `src/` 与 `tests/` 中文说明文本、CLI/API 用户文案、PDF 中文来源标签、104 个测试 |
+| 013 | 实现材料库持久化 Module | Done | `MaterialLibrary`、Draft、多来源身份、原子保存、读取、进度、删除、PDF 导入接入 |
 
 ## 当前任务
 
-无。`012-chinese-developer-text` 已完成。
+无。`013-material-library-module` 已完成。
 
 ## 下一步
 
-按已收敛设计实现材料库持久化 Module，再继续 Sprint 1 的前端骨架：
+继续 Sprint 1 的前端骨架：
 
-1. `013-material-library-module`：实现 `MaterialLibrary`、`ReadingMaterialDraft`、多来源身份和原子保存。
-2. `014-frontend-skeleton`：React + Vite 前端骨架，书架页和阅读页入口。
+1. `014-frontend-skeleton`：React + Vite 前端骨架，书架页和阅读页入口。
 
 ## 阻塞项
 
 无。
 
 ## 最近变更记录
+
+- 2026-06-07：完成材料库持久化 Module；新增 Draft、多来源身份、稳定来源键、原子保存、读取、进度和删除，并将 PDF 导入接入材料库，111 个测试通过。
+- 2026-06-07：开始实现材料库持久化 Module；范围包含 Draft、多来源身份、原子保存、读取、进度、删除和 PDF 导入接入。
 
 - 2026-06-07：完成代码与测试说明文本中文化；翻译注释、docstring、内部错误、CLI/API 用户文案和 PDF 来源标签，保留协议契约、代码标识符、英文测试夹具和第三方原始错误，104 个测试通过。
 - 2026-06-07：开始统一代码与测试说明文本为中文；明确保留代码标识符、协议固定值、英文处理测试夹具和第三方原始错误。

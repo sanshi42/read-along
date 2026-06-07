@@ -5,8 +5,10 @@ from read_along.models import (
     AudioStatus,
     Material,
     MaterialDetail,
-    MaterialStatus,
+    MaterialSource,
     ParagraphDetail,
+    ReadingMaterialDraft,
+    ReadingMaterialDraftParagraph,
     ReadingProgress,
     Sentence,
     SourceType,
@@ -16,14 +18,23 @@ from read_along.models import (
 def material_data() -> dict[str, object]:
     return {
         "id": "mat-1",
-        "source_type": "pdf",
-        "source_uri": "example.pdf",
         "title": "Example",
-        "status": "ready",
         "content_hash": "hash-1",
-        "error_message": None,
         "created_at": "2026-06-06T00:00:00Z",
         "updated_at": "2026-06-06T01:00:00Z",
+    }
+
+
+def source_data() -> dict[str, object]:
+    return {
+        "id": "source-1",
+        "material_id": "mat-1",
+        "source_type": "pdf",
+        "source_key": "hash-source",
+        "source_uri": "example.pdf",
+        "source_path": None,
+        "is_primary": True,
+        "created_at": "2026-06-06T00:00:00Z",
     }
 
 
@@ -42,10 +53,10 @@ def sentence_data() -> dict[str, object]:
 
 def test_core_models_validate_schema_rows_and_serialize_to_json_data() -> None:
     material = Material.model_validate(material_data())
+    source = MaterialSource.model_validate(source_data())
     sentence = Sentence.model_validate(sentence_data())
 
-    assert material.source_type is SourceType.PDF
-    assert material.status is MaterialStatus.READY
+    assert source.source_type is SourceType.PDF
     assert sentence.audio_status is AudioStatus.PENDING
     assert material.model_dump(mode="json")["created_at"] == "2026-06-06T00:00:00Z"
 
@@ -53,13 +64,12 @@ def test_core_models_validate_schema_rows_and_serialize_to_json_data() -> None:
 @pytest.mark.parametrize(
     ("model", "data", "field", "invalid_value"),
     [
-        (Material, material_data(), "source_type", "epub"),
-        (Material, material_data(), "status", "deleted"),
+        (MaterialSource, source_data(), "source_type", "epub"),
         (Sentence, sentence_data(), "audio_status", "missing"),
     ],
 )
-def test_core_models_reject_invalid_schema_status_values(
-    model: type[Material] | type[Sentence],
+def test_core_models_reject_invalid_enum_values(
+    model: type[MaterialSource] | type[Sentence],
     data: dict[str, object],
     field: str,
     invalid_value: str,
@@ -86,6 +96,8 @@ def test_material_detail_expresses_sentences_nested_by_paragraph() -> None:
     detail = MaterialDetail.model_validate(
         {
             **material_data(),
+            "primary_source": source_data(),
+            "sources": [source_data()],
             "progress": None,
             "paragraphs": [
                 ParagraphDetail(
@@ -102,3 +114,20 @@ def test_material_detail_expresses_sentences_nested_by_paragraph() -> None:
 
     assert detail.progress is None
     assert detail.paragraphs[0].sentences[0].id == "sentence-1"
+
+
+def test_reading_material_draft_excludes_persistence_fields() -> None:
+    draft = ReadingMaterialDraft(
+        source_type=SourceType.URL,
+        source_uri="https://example.com/article",
+        title="示例",
+        paragraphs=[
+            ReadingMaterialDraftParagraph(
+                text="第一句。",
+                sentences=["第一句。"],
+            )
+        ],
+    )
+
+    assert draft.source_file is None
+    assert "content_hash" not in draft.model_dump()

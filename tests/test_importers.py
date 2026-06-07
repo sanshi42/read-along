@@ -7,10 +7,9 @@ import pytest
 from read_along.config import AppConfig
 from read_along.db import initialize_database
 from read_along.importers import import_pdf
-from read_along.models import MaterialDetail, MaterialStatus, SourceType
-from read_along.repository import Repository
+from read_along.material_library import MaterialLibrary
+from read_along.models import MaterialDetail, SourceType
 from read_along.storage import StoragePaths
-
 
 
 def _create_text_pdf(tmp_path: Path, text: str, file_name: str = "test.pdf") -> str:
@@ -24,31 +23,28 @@ def _create_text_pdf(tmp_path: Path, text: str, file_name: str = "test.pdf") -> 
     return str(file_path)
 
 
-def _repo_and_uploads(tmp_path: Path) -> tuple[Repository, Path]:
-    """创建用于测试的 Repository 和上传目录。"""
+def _library(tmp_path: Path) -> MaterialLibrary:
+    """创建用于测试的材料库。"""
     home = tmp_path / "data"
     paths = StoragePaths.from_config(AppConfig(home=home))
     initialize_database(paths)
-    repo = Repository(paths.database)
-    return repo, paths.uploads
+    return MaterialLibrary(paths)
 
 
 class TestImportPdf:
     def test_basic_import(self, tmp_path: Path) -> None:
         _create_text_pdf(tmp_path, "Hello world. This is sentence two.")
-        repo, uploads_dir = _repo_and_uploads(tmp_path)
+        library = _library(tmp_path)
 
         result = import_pdf(
             file_path=tmp_path / "test.pdf",
             filename="test.pdf",
-            repo=repo,
-            uploads_dir=uploads_dir,
+            library=library,
         )
 
         assert isinstance(result, MaterialDetail)
-        assert result.source_type == SourceType.PDF
-        assert result.source_uri == "test.pdf"
-        assert result.status == MaterialStatus.READY
+        assert result.primary_source.source_type == SourceType.PDF
+        assert result.primary_source.source_uri == "test.pdf"
         assert result.paragraphs
         assert len(result.paragraphs) == 1
 
@@ -73,13 +69,12 @@ class TestImportPdf:
         doc.save(str(file_path))
         doc.close()
 
-        repo, uploads_dir = _repo_and_uploads(tmp_path)
+        library = _library(tmp_path)
 
         result = import_pdf(
             file_path=file_path,
             filename="two_page.pdf",
-            repo=repo,
-            uploads_dir=uploads_dir,
+            library=library,
         )
 
         assert len(result.paragraphs) == 2
@@ -88,78 +83,65 @@ class TestImportPdf:
         assert "Page one." in result.paragraphs[0].text
         assert "Page two." in result.paragraphs[1].text
 
-    def test_material_persists_in_repository(self, tmp_path: Path) -> None:
+    def test_material_persists_in_material_library(self, tmp_path: Path) -> None:
         _create_text_pdf(tmp_path, "Hello PDF.")
-        repo, uploads_dir = _repo_and_uploads(tmp_path)
+        library = _library(tmp_path)
 
         result = import_pdf(
             file_path=tmp_path / "test.pdf",
             filename="test.pdf",
-            repo=repo,
-            uploads_dir=uploads_dir,
+            library=library,
         )
 
-        # 使用同一数据库打开新的 repository
-        refreshed = Repository(repo.database)
-        material = refreshed.get_material(result.id)
-        assert material is not None
-        assert material.title == "test.pdf"
-        assert material.source_type == SourceType.PDF
-
-        paragraphs = refreshed.list_paragraphs(result.id)
-        assert len(paragraphs) == 1
-        assert "Hello PDF." in paragraphs[0].text
-
-        sentences = refreshed.list_sentences(result.id)
-        assert len(sentences) == 1
-        assert "Hello PDF." == sentences[0].text
+        refreshed = MaterialLibrary(library.storage_paths).get(result.id)
+        assert refreshed.title == "test.pdf"
+        assert refreshed.primary_source.source_type == SourceType.PDF
+        assert len(refreshed.paragraphs) == 1
+        assert refreshed.paragraphs[0].sentences[0].text == "Hello PDF."
 
     def test_uploaded_file_copied_to_uploads(self, tmp_path: Path) -> None:
         _create_text_pdf(tmp_path, "Content.")
-        repo, uploads_dir = _repo_and_uploads(tmp_path)
+        library = _library(tmp_path)
 
         result = import_pdf(
             file_path=tmp_path / "test.pdf",
             filename="test.pdf",
-            repo=repo,
-            uploads_dir=uploads_dir,
+            library=library,
         )
 
-        expected_copy = uploads_dir / f"{result.id}.pdf"
-        assert expected_copy.exists()
+        assert result.primary_source.source_path is not None
+        expected_copy = Path(result.primary_source.source_path)
+        assert expected_copy.is_file()
         assert expected_copy.stat().st_size > 0
 
     def test_empty_pdf_raises_value_error(self, tmp_path: Path) -> None:
         """没有文本的 PDF 应抛出 ValueError。"""
         _create_text_pdf(tmp_path, "", file_name="empty.pdf")
-        repo, uploads_dir = _repo_and_uploads(tmp_path)
+        library = _library(tmp_path)
 
         with pytest.raises(ValueError, match="不包含可提取文本"):
             import_pdf(
                 file_path=tmp_path / "empty.pdf",
                 filename="empty.pdf",
-                repo=repo,
-                uploads_dir=uploads_dir,
+                library=library,
             )
 
     def test_idempotent_material_id(self, tmp_path: Path) -> None:
         """重复导入同名 PDF 应生成相同的 material_id。"""
         _create_text_pdf(tmp_path, "Some text.")
-        repo1, uploads_dir1 = _repo_and_uploads(tmp_path / "r1")
+        library1 = _library(tmp_path / "r1")
 
         result1 = import_pdf(
             file_path=tmp_path / "test.pdf",
             filename="test.pdf",
-            repo=repo1,
-            uploads_dir=uploads_dir1,
+            library=library1,
         )
 
-        repo2, uploads_dir2 = _repo_and_uploads(tmp_path / "r2")
+        library2 = _library(tmp_path / "r2")
         result2 = import_pdf(
             file_path=tmp_path / "test.pdf",
             filename="test.pdf",
-            repo=repo2,
-            uploads_dir=uploads_dir2,
+            library=library2,
         )
 
         assert result1.id == result2.id
@@ -174,20 +156,18 @@ class TestImportPdf:
         doc.save(str(file_path))
         doc.close()
 
-        repo, uploads_dir = _repo_and_uploads(tmp_path)
+        library = _library(tmp_path)
 
         result = import_pdf(
             file_path=file_path,
             filename="ordered.pdf",
-            repo=repo,
-            uploads_dir=uploads_dir,
+            library=library,
         )
 
         # 句子应保持原有顺序
         all_sentences = [s.text for p in result.paragraphs for s in p.sentences]
         assert "First sentence." in all_sentences
         assert "Second sentence." in all_sentences
-
 
     def test_noise_lines_filtered(self, tmp_path: Path) -> None:
         """导入文本时应过滤“上一篇”等噪声行。"""
@@ -200,13 +180,12 @@ class TestImportPdf:
         doc.save(str(file_path))
         doc.close()
 
-        repo, uploads_dir = _repo_and_uploads(tmp_path)
+        library = _library(tmp_path)
 
         result = import_pdf(
             file_path=file_path,
             filename="noise.pdf",
-            repo=repo,
-            uploads_dir=uploads_dir,
+            library=library,
         )
 
         # 应已过滤“上一篇”

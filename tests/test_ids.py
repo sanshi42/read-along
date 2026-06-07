@@ -4,44 +4,39 @@ from read_along.ids import (
     generate_material_id,
     generate_paragraph_id,
     generate_sentence_id,
+    generate_source_id,
 )
 
 
 # -- 材料 ID ---------------------------------------------------------------
 
 def test_material_id_is_deterministic() -> None:
-    first = generate_material_id("url", "https://example.com/article")
-    second = generate_material_id("url", "https://example.com/article")
+    first = generate_material_id("a" * 64)
+    second = generate_material_id("a" * 64)
 
     assert first == second
 
 
-def test_material_id_differs_by_source_type() -> None:
-    pdf_id = generate_material_id("pdf", "file.pdf")
-    url_id = generate_material_id("url", "file.pdf")
-
-    assert pdf_id != url_id
-
-
-def test_material_id_differs_by_source_uri() -> None:
-    a = generate_material_id("url", "https://a.example.com")
-    b = generate_material_id("url", "https://b.example.com")
+def test_material_id_differs_by_content_hash() -> None:
+    a = generate_material_id("a" * 64)
+    b = generate_material_id("b" * 64)
 
     assert a != b
 
 
 def test_material_id_format() -> None:
-    mid = generate_material_id("url", "https://example.com")
+    mid = generate_material_id("a" * 64)
 
     assert mid.startswith("mat_")
-    assert len(mid) == 12  # 'mat_' + 8 个十六进制字符
+    assert len(mid) == 20  # 'mat_' + 16 个十六进制字符
 
 
-def test_material_id_handles_unicode_uri() -> None:
-    mid = generate_material_id("url", "https://例子.com/文章")
+def test_source_id_is_deterministic() -> None:
+    first = generate_source_id("url", "https://example.com/article")
+    second = generate_source_id("url", "https://example.com/article")
 
-    assert mid.startswith("mat_")
-    assert len(mid) == 12
+    assert first == second
+    assert first.startswith("src_")
 
 
 # -- 段落 ID ---------------------------------------------------------------
@@ -135,7 +130,7 @@ def test_sentence_id_rejects_negative_index() -> None:
 # -- 跨实体一致性 ----------------------------------------------------------
 
 def test_ids_are_globally_unique() -> None:
-    mid = generate_material_id("url", "https://example.com")
+    mid = generate_material_id("a" * 64)
 
     paragraph_ids = {
         generate_paragraph_id(mid, i) for i in range(10)
@@ -153,7 +148,7 @@ def test_ids_are_globally_unique() -> None:
 
 
 def test_ids_are_non_empty_and_non_numeric() -> None:
-    mid = generate_material_id("pdf", "example.pdf")
+    mid = generate_material_id("a" * 64)
     pid = generate_paragraph_id(mid, 0)
     sid = generate_sentence_id(mid, 0)
 

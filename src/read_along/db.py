@@ -10,21 +10,29 @@ from read_along.storage import StoragePaths
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS materials (
     id TEXT PRIMARY KEY,
-    source_type TEXT NOT NULL CHECK (source_type IN ('url', 'pdf')),
-    source_uri TEXT NOT NULL,
     title TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('importing', 'ready', 'failed')),
-    content_hash TEXT NOT NULL,
-    error_message TEXT,
+    content_hash TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_materials_source_uri
-ON materials (source_uri);
+CREATE TABLE IF NOT EXISTS material_sources (
+    id TEXT PRIMARY KEY,
+    material_id TEXT NOT NULL REFERENCES materials (id) ON DELETE CASCADE,
+    source_type TEXT NOT NULL CHECK (source_type IN ('url', 'pdf')),
+    source_key TEXT NOT NULL,
+    source_uri TEXT NOT NULL,
+    source_path TEXT,
+    is_primary INTEGER NOT NULL CHECK (is_primary IN (0, 1)),
+    created_at TEXT NOT NULL,
+    UNIQUE (source_type, source_key)
+);
 
-CREATE INDEX IF NOT EXISTS idx_materials_content_hash
-ON materials (content_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_material_sources_one_primary
+ON material_sources (material_id) WHERE is_primary = 1;
+
+CREATE INDEX IF NOT EXISTS idx_material_sources_material_id
+ON material_sources (material_id);
 
 CREATE TABLE IF NOT EXISTS paragraphs (
     id TEXT PRIMARY KEY,

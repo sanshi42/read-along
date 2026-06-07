@@ -1,147 +1,41 @@
 from __future__ import annotations
 
-import hashlib
-import shutil
-from datetime import datetime, timezone
 from pathlib import Path
 
 from read_along.extractors import pdf_page_texts, structure_text
-from read_along.ids import generate_material_id, generate_paragraph_id, generate_sentence_id
+from read_along.material_library import MaterialLibrary
 from read_along.models import (
-    AudioStatus,
     MaterialDetail,
-    MaterialStatus,
-    ParagraphDetail,
-    Sentence,
+    ReadingMaterialDraft,
+    ReadingMaterialDraftParagraph,
     SourceType,
 )
-from read_along.repository import Repository
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _content_hash(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def import_pdf(
     *,
     file_path: Path,
     filename: str,
-    repo: Repository,
-    uploads_dir: Path,
+    library: MaterialLibrary,
 ) -> MaterialDetail:
-    """将文本型 PDF 文件导入阅读材料库。
-
-    1. 提取每一页的文本。
-    2. 将每一页的文本结构化为逻辑段落和句子。
-    3. 创建材料记录。
-    4. 保存段落和句子。
-    5. 返回完整的 MaterialDetail。
-    """
-    pages = pdf_page_texts(str(file_path))
-
-    material_id = generate_material_id("pdf", filename)
-    full_text = "\n\n".join(text for _, text in pages)
-    content_hash = _content_hash(full_text)
-    now = _now_iso()
-
-    repo.create_material(
-        material_id=material_id,
-        source_type=SourceType.PDF.value,
-        source_uri=filename,
-        title=filename,
-        status=MaterialStatus.READY.value,
-        content_hash=content_hash,
-        error_message=None,
-        created_at=now,
-        updated_at=now,
-    )
-
-    paragraph_details: list[ParagraphDetail] = []
-    paragraph_index = 0
-    sentence_index = 0
-
-    for page_number, page_text in pages:
-        # 将当前页文本结构化为逻辑段落
-        structured = structure_text(page_text)
-        if not structured:
-            continue
-
-        for block_num, sentences_data in enumerate(structured, start=1):
-            paragraph_index += 1
-            paragraph_id = generate_paragraph_id(material_id, paragraph_index)
-            para_text = " ".join(sentences_data)
-            source_label = f"第 {page_number} 页，第 {block_num} 段"
-
-            repo.add_paragraph(
-                paragraph_id=paragraph_id,
-                material_id=material_id,
-                index=paragraph_index,
-                text=para_text,
-                source_label=source_label,
-            )
-
-            sentence_models: list[Sentence] = []
-            for sent_text in sentences_data:
-                sentence_index += 1
-                sentence_id = generate_sentence_id(material_id, sentence_index)
-
-                repo.add_sentence(
-                    sentence_id=sentence_id,
-                    material_id=material_id,
-                    paragraph_id=paragraph_id,
-                    index=sentence_index,
-                    text=sent_text,
-                    audio_status=AudioStatus.PENDING.value,
-                    audio_path=None,
-                    error_message=None,
-                )
-
-                sentence_models.append(
-                    Sentence(
-                        id=sentence_id,
-                        material_id=material_id,
-                        paragraph_id=paragraph_id,
-                        index=sentence_index,
-                        text=sent_text,
-                        audio_status=AudioStatus.PENDING,
-                        audio_path=None,
-                        error_message=None,
-                    )
-                )
-
-            paragraph_details.append(
-                ParagraphDetail(
-                    id=paragraph_id,
-                    material_id=material_id,
-                    index=paragraph_index,
-                    text=para_text,
-                    source_label=source_label,
-                    sentences=sentence_models,
+    """将文本型 PDF 提取为 Draft，并保存到材料库。"""
+    paragraphs: list[ReadingMaterialDraftParagraph] = []
+    for page_number, page_text in pdf_page_texts(str(file_path)):
+        for block_number, sentences in enumerate(structure_text(page_text), start=1):
+            paragraphs.append(
+                ReadingMaterialDraftParagraph(
+                    text=" ".join(sentences),
+                    source_label=f"第 {page_number} 页，第 {block_number} 段",
+                    sentences=sentences,
                 )
             )
 
-    # 将上传文件复制到 uploads/ 以便保留
-    uploads_dir.mkdir(parents=True, exist_ok=True)
-    dest = uploads_dir / f"{material_id}.pdf"
-    shutil.copy2(file_path, dest)
-
-    material = repo.get_material(material_id)
-    assert material is not None
-
-    return MaterialDetail(
-        id=material.id,
-        source_type=material.source_type,
-        source_uri=material.source_uri,
-        title=material.title,
-        status=material.status,
-        content_hash=material.content_hash,
-        error_message=material.error_message,
-        created_at=material.created_at,
-        updated_at=material.updated_at,
-        progress=None,
-        paragraphs=paragraph_details,
+    return library.save(
+        ReadingMaterialDraft(
+            source_type=SourceType.PDF,
+            source_uri=filename,
+            title=filename,
+            source_file=file_path,
+            paragraphs=paragraphs,
+        )
     )
