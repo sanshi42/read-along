@@ -53,12 +53,12 @@ def test_serve_uses_default_local_binding(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_serve_reports_bind_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_bind(host: str, port: int) -> None:
-        raise RuntimeError(f"Cannot bind server to {host}:{port}.")
+        raise RuntimeError(f"无法绑定服务到 {host}:{port}。")
 
     monkeypatch.setattr(cli, "_ensure_bind_available", fake_bind)
 
     result = CliRunner().invoke(app, ["serve"])
 
     assert result.exit_code == 1
-    assert "Read Along server startup failed" in result.output
-    assert "Cannot bind server to 127.0.0.1:8765" in result.output
+    assert "Read Along 服务启动失败" in result.output
+    assert "无法绑定服务到 127.0.0.1:8765" in result.output

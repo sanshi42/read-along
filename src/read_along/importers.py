@@ -33,13 +33,13 @@ def import_pdf(
     repo: Repository,
     uploads_dir: Path,
 ) -> MaterialDetail:
-    """Import a text PDF file into the reading material library.
+    """将文本型 PDF 文件导入阅读材料库。
 
-    1. Extract text from each page.
-    2. Structure each page's text into logical paragraphs and sentences.
-    3. Create the material record.
-    4. Store paragraphs and sentences.
-    5. Return the full MaterialDetail.
+    1. 提取每一页的文本。
+    2. 将每一页的文本结构化为逻辑段落和句子。
+    3. 创建材料记录。
+    4. 保存段落和句子。
+    5. 返回完整的 MaterialDetail。
     """
     pages = pdf_page_texts(str(file_path))
 
@@ -65,7 +65,7 @@ def import_pdf(
     sentence_index = 0
 
     for page_number, page_text in pages:
-        # Structure this page's text into logical paragraphs
+        # 将当前页文本结构化为逻辑段落
         structured = structure_text(page_text)
         if not structured:
             continue
@@ -74,7 +74,7 @@ def import_pdf(
             paragraph_index += 1
             paragraph_id = generate_paragraph_id(material_id, paragraph_index)
             para_text = " ".join(sentences_data)
-            source_label = f"Page {page_number}, Block {block_num}"
+            source_label = f"第 {page_number} 页，第 {block_num} 段"
 
             repo.add_paragraph(
                 paragraph_id=paragraph_id,
@@ -124,7 +124,7 @@ def import_pdf(
                 )
             )
 
-    # Copy uploaded file into uploads/ for preservation
+    # 将上传文件复制到 uploads/ 以便保留
     uploads_dir.mkdir(parents=True, exist_ok=True)
     dest = uploads_dir / f"{material_id}.pdf"
     shutil.copy2(file_path, dest)

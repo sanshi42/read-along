@@ -21,7 +21,7 @@ class AppState:
         self.repository = repository
 
 
-# Global state set by cli.py before the app is used
+# 应用使用前由 cli.py 设置的全局状态
 _state: AppState | None = None
 
 
@@ -40,13 +40,13 @@ def init_app_state() -> AppState:
 
 def get_storage_paths() -> StoragePaths:
     state = _state
-    assert state is not None, "app state not initialized"
+    assert state is not None, "应用状态尚未初始化"
     return state.storage_paths
 
 
 def get_repository() -> Repository:
     state = _state
-    assert state is not None, "app state not initialized"
+    assert state is not None, "应用状态尚未初始化"
     return state.repository
 
 
@@ -70,14 +70,14 @@ def create_app() -> FastAPI:
         repo: Repository = Depends(get_repository),
         storage_paths: StoragePaths = Depends(get_storage_paths),
     ) -> Any:
-        """Upload and import a text PDF as reading material."""
+        """上传文本型 PDF 并将其导入为阅读材料。"""
         if file.filename is None or not file.filename.lower().endswith(".pdf"):
             return JSONResponse(
                 status_code=400,
-                content={"detail": "Only PDF files are accepted."},
+                content={"detail": "仅支持 PDF 文件。"},
             )
 
-        # Save the uploaded file to a temporary location
+        # 将上传文件保存到临时位置
         suffix = ".pdf"
         with NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp_path = Path(tmp.name)
@@ -98,7 +98,7 @@ def create_app() -> FastAPI:
                 content={"detail": str(exc)},
             )
         finally:
-            # Clean up the temp file
+            # 清理临时文件
             tmp_path.unlink(missing_ok=True)
 
     return app

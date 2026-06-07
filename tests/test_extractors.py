@@ -17,7 +17,7 @@ from read_along.extractors import (
 
 
 def _create_pdf(tmp_path: Path, text: str, file_name: str = "test.pdf") -> str:
-    """Create a single-page text PDF for testing."""
+    """创建用于测试的单页文本型 PDF。"""
     file_path = tmp_path / file_name
     doc = pymupdf.open()
     page = doc.new_page()
@@ -113,11 +113,11 @@ class TestPdfPageTexts:
 
     def test_empty_pdf_raises_value_error(self, tmp_path: Path) -> None:
         path = _create_pdf(tmp_path, "")
-        with pytest.raises(ValueError, match="extractable text"):
+        with pytest.raises(ValueError, match="不包含可提取文本"):
             pdf_page_texts(path)
 
     def test_multiple_pages(self, tmp_path: Path) -> None:
-        """Create a two-page PDF and verify both pages are extracted."""
+        """创建两页 PDF 并验证两页文本均被提取。"""
         file_path = tmp_path / "two_page.pdf"
         doc = pymupdf.open()
         page1 = doc.new_page()
@@ -187,10 +187,10 @@ class TestCleanText:
     def test_preserves_blank_lines_as_separators(self) -> None:
         text = "Para 1.\n\nPara 2."
         result = clean_text(text)
-        # Should still have the paragraph separation
+        # 应继续保留段落分隔
         assert "Para 1." in result
         assert "Para 2." in result
-        # The double newline separator should be preserved
+        # 应保留双换行分隔符
         assert "\n\n" in result
 
 
@@ -203,16 +203,16 @@ class TestSplitSentencesNoise:
 
     def test_filters_pure_punctuation(self) -> None:
         result = split_sentences("Hello. ... World.")
-        # ... is pure punctuation, should be filtered
+        # ... 是纯标点，应被过滤
         assert "..." not in result
 
     def test_long_sentence_split_at_comma(self) -> None:
-        # Build a sentence > 120 chars with commas
+        # 构造包含逗号且长度超过 120 个字符的句子
         base = "这是一个很长的句子，" * 8
-        # Each repetition is ~10 chars, 8 * 13 = 104
+        # 每次重复约 10 个字符，8 * 13 = 104
         text = base + "这是最后的结束。"
         result = split_sentences(text, max_length=60)
-        # Should be split into multiple pieces
+        # 应被拆分为多个片段
         assert len(result) >= 2
 
     def test_short_sentences_preserved(self) -> None:
@@ -230,9 +230,9 @@ class TestStructureText:
     def test_noise_filtered_in_pipeline(self) -> None:
         text = "正文。\n\n上一篇\n\n结束。"
         result = structure_text(text)
-        # "上一篇" paragraph should be filtered
+        # 应过滤“上一篇”段落
         assert all("上一篇" not in " ".join(sentences) for sentences in result)
-        # Should have 2 paragraphs: "正文。" and "结束。"
+        # 应保留“正文。”和“结束。”两个段落
         assert len(result) == 2
 
     def test_empty_text(self) -> None:
@@ -257,6 +257,5 @@ class TestLongSentenceSplit:
         result = _split_long_sentence(long_text, max_length=100)
         assert len(result) == 1
         assert result[0] == long_text
-
 
 

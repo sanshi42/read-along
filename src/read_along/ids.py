@@ -4,11 +4,10 @@ import hashlib
 
 
 def generate_material_id(source_type: str, source_uri: str) -> str:
-    """Generate a stable material ID from source type and URI.
+    """根据来源类型和 URI 生成稳定的材料 ID。
 
-    The ID is deterministic: the same (source_type, source_uri) always
-    produces the same material ID, making it safe to compute before
-    content extraction begins.
+    ID 具有确定性：相同的 (source_type, source_uri) 始终生成相同的材料 ID，
+    因此可以在开始提取内容前安全计算。
     """
     key = f"{source_type}\x00{source_uri}"
     digest = hashlib.sha256(key.encode()).hexdigest()[:8]
@@ -16,23 +15,21 @@ def generate_material_id(source_type: str, source_uri: str) -> str:
 
 
 def generate_paragraph_id(material_id: str, index: int) -> str:
-    """Generate a paragraph ID scoped to a material and ordered by index.
+    """生成材料范围内按索引排序的段落 ID。
 
-    The ID embeds the material for global uniqueness and a zero-padded
-    index so paragraphs sort naturally when IDs are compared
-    lexicographically within the same material.
+    ID 中包含材料 ID 以保证全局唯一，并包含补零索引，使同一材料中的段落 ID
+    按字典序比较时能够自然排序。
     """
     if index < 0:
-        raise ValueError(f"Paragraph index must be non-negative, got {index}")
+        raise ValueError(f"段落索引必须为非负数，实际为 {index}")
     return f"{material_id}_p_{index:05d}"
 
 
 def generate_sentence_id(material_id: str, index: int) -> str:
-    """Generate a sentence ID scoped to a material and ordered by index.
+    """生成材料范围内按索引排序的句子 ID。
 
-    Same pattern as paragraph IDs, with wider padding for the larger
-    expected sentence count.
+    格式与段落 ID 相同，但考虑到预期句子数量更多，使用更宽的补零位数。
     """
     if index < 0:
-        raise ValueError(f"Sentence index must be non-negative, got {index}")
+        raise ValueError(f"句子索引必须为非负数，实际为 {index}")
     return f"{material_id}_s_{index:07d}"

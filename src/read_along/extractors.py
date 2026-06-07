@@ -4,10 +4,9 @@ import re
 
 import pymupdf
 
-# --- Regex patterns ---
+# --- 正则表达式 ---
 
-# Common noise patterns: short navigational labels, social share buttons,
-# comment section headers, page-turn prompts, etc.
+# 常见噪声模式：简短导航标签、社交分享按钮、评论区标题和翻页提示等
 _NOISE_LINE_PATTERNS = [
     re.compile(r"^\s*(上一篇|下一篇|下一章|下一节|返回目录|回顶部|返回首页)\s*$"),
     re.compile(r"^\s*(分享|收藏|点赞|评论|举报|投诉|赞赏|打赏|关注)\s*$"),
@@ -15,21 +14,21 @@ _NOISE_LINE_PATTERNS = [
     re.compile(r"^\s*(登录|注册|退出|设置|搜索|扫码|手机看|APP看)\s*$"),
     re.compile(r"^\s*(更多|加载更多|展开全文|收起)\s*$"),
     re.compile(r"^\s*(Copyright|©|版权所有|All Rights Reserved|隐私政策|用户协议).*\s*$"),
-    # Single character or purely symbolic lines
+    # 单个字符或纯符号行
     re.compile(r"^\s*[^\w\u4e00-\u9fff]+\s*$"),
-    # Very short lines (1 character)
+    # 极短行（1 个字符）
     re.compile(r"^\s*\w\s*$"),
 ]
 
-# Full-width space, non-breaking space
+# 全角空格和不换行空格
 _SPACE_REPLACEMENTS = {"\u3000": " ", "\xa0": " "}
 
 
 def pdf_page_texts(file_path: str) -> list[tuple[int, str]]:
-    """Extract text from each page of a PDF.
+    """提取 PDF 每一页的文本。
 
-    Returns a list of (page_number, text) tuples. Raises ValueError
-    when the PDF contains no extractable text (likely a scanned PDF).
+    返回由 (页码, 文本) 元组组成的列表。PDF 不包含可提取文本时
+    抛出 ValueError，这通常表示 PDF 是未经过 OCR 的扫描文件。
     """
     doc = pymupdf.open(file_path)
     pages: list[tuple[int, str]] = []
@@ -45,13 +44,13 @@ def pdf_page_texts(file_path: str) -> list[tuple[int, str]]:
 
     total = sum(len(page_text) for _, page_text in pages)
     if total == 0:
-        raise ValueError("PDF does not contain extractable text (likely a scanned PDF without OCR).")
+        raise ValueError("PDF 不包含可提取文本，可能是未经过 OCR 的扫描文件。")
 
     return pages
 
 
 def normalize_whitespace(text: str) -> str:
-    """Collapse whitespace (including tabs and non-breaking spaces) and strip edges."""
+    """合并空白字符（包括制表符和不换行空格）并去除首尾空白。"""
     for old, new in _SPACE_REPLACEMENTS.items():
         text = text.replace(old, new)
     text = re.sub(r"\s+", " ", text)
@@ -59,18 +58,17 @@ def normalize_whitespace(text: str) -> str:
 
 
 def clean_text(text: str) -> str:
-    """Remove common noise patterns from extracted text.
+    """移除提取文本中的常见噪声模式。
 
-    Strips lines matching known noise patterns (navigation, social
-    buttons, comment headers, copyright notices, etc.) and removes
-    duplicate consecutive lines.
+    删除符合已知噪声模式的行，包括导航、社交按钮、评论区标题和版权声明等，
+    并删除连续重复行。
     """
     lines = text.split("\n")
     filtered: list[str] = []
     for line in lines:
         stripped = line.strip()
         if not stripped:
-            # Preserve blank lines as paragraph separators
+            # 保留空行作为段落分隔符
             if filtered and filtered[-1] != "":
                 filtered.append("")
             continue
@@ -78,7 +76,7 @@ def clean_text(text: str) -> str:
             continue
         filtered.append(stripped)
 
-    # Remove trailing blank lines
+    # 删除末尾空行
     while filtered and filtered[-1] == "":
         filtered.pop()
 
@@ -86,7 +84,7 @@ def clean_text(text: str) -> str:
 
 
 def _is_noise_line(line: str) -> bool:
-    """Check if a single line is a known noise pattern."""
+    """检查单行文本是否符合已知噪声模式。"""
     for pattern in _NOISE_LINE_PATTERNS:
         if pattern.match(line):
             return True
@@ -94,9 +92,9 @@ def _is_noise_line(line: str) -> bool:
 
 
 def split_paragraphs(text: str) -> list[str]:
-    """Split text into paragraphs using consecutive newline boundaries.
+    """使用连续换行边界将文本拆分为段落。
 
-    Treats one or more blank lines as paragraph separators.
+    将一个或多个空行视为段落分隔符。
     """
     normalised = text.replace("\r\n", "\n").replace("\r", "\n")
     blocks = re.split(r"\n\s*\n", normalised)
@@ -104,12 +102,10 @@ def split_paragraphs(text: str) -> list[str]:
 
 
 def split_sentences(text: str, *, max_length: int = 120) -> list[str]:
-    """Split a text block into sentences with noise filtering.
+    """将文本块拆分为句子并过滤噪声。
 
-    Recognises Chinese sentence-final punctuation (。！？；) and
-    English sentence-end punctuation (.?!;).  Filters overly short
-    noise sentences and splits overly long sentences at Chinese comma
-    positions.
+    识别中文句末标点（。！？；）和英文句末标点（.?!;）。
+    过滤过短的噪声句，并在中文逗号位置拆分过长句子。
     """
     if not text:
         return []
@@ -132,21 +128,21 @@ def split_sentences(text: str, *, max_length: int = 120) -> list[str]:
             else:
                 sentences.append(stripped)
 
-    # Filter noise sentences
+    # 过滤噪声句子
     return [s for s in sentences if not _is_noise_sentence(s)]
 
 
 def _contains_cjk(text: str) -> bool:
-    """Check if text contains any CJK characters."""
+    """检查文本是否包含 CJK 字符。"""
     return bool(re.search(r"[\u4e00-\u9fff\u3400-\u4dbf]", text))
 
 
 def _split_long_sentence(text: str, max_length: int) -> list[str]:
-    """Split an overly long sentence at Chinese comma (，) positions.
+    """在中文逗号（，）位置拆分过长句子。
 
-    Each resulting segment is at least 20 characters long where possible.
+    在可能的情况下，使每个拆分片段至少包含 20 个字符。
     """
-    # Split at Chinese commas
+    # 按中文逗号拆分
     parts = re.split(r"(?<=，)", text)
     result: list[str] = []
     buf = ""
@@ -166,21 +162,21 @@ def _split_long_sentence(text: str, max_length: int) -> list[str]:
 
 
 def _is_noise_sentence(sentence: str) -> bool:
-    """Check if a sentence is noise (too short, pure symbols, known patterns)."""
+    """检查句子是否为噪声，包括过短、纯符号或符合已知模式的句子。"""
     stripped = sentence.strip()
     if not stripped:
         return True
 
-    # Pure punctuation/symbols (no CJK, no ASCII letters/numbers)
+    # 纯标点或符号，不包含 CJK 字符、ASCII 字母或数字
     has_content = re.search(r"[\u4e00-\u9fff\w]", stripped)
     if not has_content:
         return True
 
-    # Match known noise patterns
+    # 匹配已知噪声模式
     if _is_noise_line(stripped):
         return True
 
-    # Single CJK character (possibly with punctuation) is likely noise
+    # 单个 CJK 字符（可能带标点）通常属于噪声
     no_punct = re.sub(r"[。！？；，…、.?!;,\s]+", "", stripped)
     if len(no_punct) <= 1 and re.search(r"[\u4e00-\u9fff]", no_punct):
         return True
@@ -189,13 +185,11 @@ def _is_noise_sentence(sentence: str) -> bool:
 
 
 def structure_text(text: str) -> list[list[str]]:
-    """Structure raw text into paragraphs and sentences.
+    """将原始文本结构化为段落和句子。
 
-    Pipeline: clean noise → split into paragraphs → split each
-    paragraph into sentences.
+    处理流程：清理噪声 -> 拆分段落 -> 将各段落拆分为句子。
 
-    Returns a list of paragraphs, each paragraph being a list of
-    sentence strings.
+    返回段落列表，每个段落由句子字符串列表组成。
     """
     cleaned = clean_text(text)
     paragraphs = split_paragraphs(cleaned)

@@ -1,4 +1,4 @@
-"""Read Along application package."""
+"""Read Along 应用包。"""
 
 __all__ = ["__version__"]
 

@@ -22,17 +22,18 @@
 | 009 | PDF 导入 | Done | `extractors.py`、`importers.py`、`POST /api/import/pdf`、29 个测试 |
 | 010 | 文本结构化 | Done | 增强 `extractors.py`（噪声清洗、长句切分、噪声过滤）、`structure_text` 管线、改进段落检测、21 个新测试 |
 | 011 | 深化材料库持久化 Module 设计 | Done | `CONTEXT.md`、材料库 Interface、多来源身份、稳定来源键、原子保存与错误语义、技术方案更新 |
+| 012 | 统一代码与测试说明文本为中文 | Done | `src/` 与 `tests/` 中文说明文本、CLI/API 用户文案、PDF 中文来源标签、104 个测试 |
 
 ## 当前任务
 
-无。`011-material-library-architecture` 已完成。
+无。`012-chinese-developer-text` 已完成。
 
 ## 下一步
 
 按已收敛设计实现材料库持久化 Module，再继续 Sprint 1 的前端骨架：
 
-1. `012-material-library-module`：实现 `MaterialLibrary`、`ReadingMaterialDraft`、多来源身份和原子保存。
-2. `013-frontend-skeleton`：React + Vite 前端骨架，书架页和阅读页入口。
+1. `013-material-library-module`：实现 `MaterialLibrary`、`ReadingMaterialDraft`、多来源身份和原子保存。
+2. `014-frontend-skeleton`：React + Vite 前端骨架，书架页和阅读页入口。
 
 ## 阻塞项
 
@@ -40,6 +41,8 @@
 
 ## 最近变更记录
 
+- 2026-06-07：完成代码与测试说明文本中文化；翻译注释、docstring、内部错误、CLI/API 用户文案和 PDF 来源标签，保留协议契约、代码标识符、英文测试夹具和第三方原始错误，104 个测试通过。
+- 2026-06-07：开始统一代码与测试说明文本为中文；明确保留代码标识符、协议固定值、英文处理测试夹具和第三方原始错误。
 - 2026-06-06：完成材料库持久化 Module 设计，收敛 Draft、外部 Interface、多来源身份、稳定来源键、成功材料模型、重复导入、原子保存、读取、进度、删除、源文件所有权和错误模式。
 - 2026-06-06：开始深化材料库持久化 Module 设计；确认该 Module 拥有完整持久化生命周期，`content_hash` 基于结构化正文计算，并新增领域词汇表。
 - 2026-06-07：完成文本结构化，增强 `extractors.py`（`clean_text` 噪声清洗、长句逗号切分、单字/纯符号句过滤、`structure_text` 管线），`import_pdf` 改用逻辑段落拆分，新增 21 个测试，102 全量通过。

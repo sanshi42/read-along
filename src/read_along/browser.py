@@ -85,7 +85,7 @@ function run(argv) {
   const jsCode = argv[0];
   const chrome = Application('Google Chrome');
   if (chrome.windows.length === 0) {
-    throw new Error('No Chrome window is open.');
+    throw new Error('没有已打开的 Chrome 窗口。');
   }
   const tab = chrome.windows[0].activeTab;
   return tab.execute({ javascript: jsCode });
@@ -120,12 +120,13 @@ def fetch_tabs(debug_url: str = DEFAULT_DEBUG_URL, timeout: float = 5.0) -> list
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.URLError as exc:
         raise BrowserExtractionError(
-            f"Cannot connect to Chrome DevTools at {endpoint}. "
-            "Start Chrome with --remote-debugging-port first."
+            f"无法连接 Chrome DevTools：{endpoint}。"
+            "请先使用 --remote-debugging-port 启动 Chrome。"
+            f"原始错误：{exc}"
         ) from exc
 
     if not isinstance(payload, list):
-        raise BrowserExtractionError("Chrome DevTools returned an unexpected tab list.")
+        raise BrowserExtractionError("Chrome DevTools 返回了非预期的标签页列表。")
 
     tabs: list[BrowserTab] = []
     for item in payload:
@@ -159,16 +160,16 @@ def select_tab(
         candidates = [tab for tab in candidates if title_contains in tab.title]
 
     if not candidates:
-        available = "\n".join(f"- {tab.title} | {tab.url}" for tab in tabs[:10]) or "- no page tabs"
+        available = "\n".join(f"- {tab.title} | {tab.url}" for tab in tabs[:10]) or "- 没有页面标签页"
         raise BrowserExtractionError(
-            "No Chrome tab matched the requested filters.\n"
-            f"Available tabs:\n{available}"
+            "没有 Chrome 标签页符合指定筛选条件。\n"
+            f"可用标签页：\n{available}"
         )
     if len(candidates) > 1:
         available = "\n".join(f"- {tab.title} | {tab.url}" for tab in candidates[:10])
         raise BrowserExtractionError(
-            "More than one Chrome tab matched. Add --tab-title-contains or narrow --tab-url-contains.\n"
-            f"Matched tabs:\n{available}"
+            "有多个 Chrome 标签页符合条件。请添加 --tab-title-contains 或缩小 --tab-url-contains 的范围。\n"
+            f"匹配的标签页：\n{available}"
         )
     return candidates[0]
 
@@ -199,10 +200,10 @@ def evaluate_runtime_expression(tab: BrowserTab, expression: str, timeout: float
             if message.get("id") != request_id:
                 continue
             if "error" in message:
-                raise BrowserExtractionError(f"Chrome Runtime.evaluate failed: {message['error']}")
+                raise BrowserExtractionError(f"Chrome Runtime.evaluate 失败：{message['error']}")
             result = message.get("result", {})
             if "exceptionDetails" in result:
-                raise BrowserExtractionError("Chrome page script raised an exception.")
+                raise BrowserExtractionError("Chrome 页面脚本抛出了异常。")
             return result.get("result", {}).get("value")
     finally:
         websocket.close()
@@ -221,7 +222,7 @@ def extract_page_text(
     )
     raw_value = evaluate_runtime_expression(tab, EXTRACT_PAGE_SCRIPT, timeout=timeout)
     if not isinstance(raw_value, str):
-        raise BrowserExtractionError("Chrome page extraction returned a non-string result.")
+        raise BrowserExtractionError("Chrome 页面提取返回了非字符串结果。")
 
     return page_text_from_payload(raw_value, fallback_title=tab.title, fallback_url=tab.url)
 
@@ -236,32 +237,32 @@ def extract_front_chrome_text(timeout: float = 10.0) -> BrowserPageText:
             timeout=timeout,
         )
     except FileNotFoundError as exc:
-        raise BrowserExtractionError("osascript is not available on this system.") from exc
+        raise BrowserExtractionError("当前系统无法使用 osascript。") from exc
     except subprocess.TimeoutExpired as exc:
-        raise BrowserExtractionError("Timed out while reading the frontmost Chrome tab.") from exc
+        raise BrowserExtractionError("读取 Chrome 前台标签页超时。") from exc
     except subprocess.CalledProcessError as exc:
         message = (exc.stderr or exc.stdout or "").strip()
         if "not allowed" in message.lower() or "javascript" in message.lower():
             message += (
-                "\nEnable Chrome's View > Developer > Allow JavaScript from Apple Events, "
-                "then run the command again."
+                "\n请启用 Chrome 的“查看 > 开发者 > 允许来自 Apple 事件的 JavaScript”，"
+                "然后重新运行命令。"
             )
-        raise BrowserExtractionError(f"Could not read the frontmost Chrome tab. {message}") from exc
+        raise BrowserExtractionError(f"无法读取 Chrome 前台标签页：{message}") from exc
 
     return page_text_from_payload(completed.stdout.strip())
 
 
 def page_text_from_payload(
     raw_value: str,
-    fallback_title: str = "Browser Page",
+    fallback_title: str = "浏览器页面",
     fallback_url: str = "",
 ) -> BrowserPageText:
     payload = json.loads(raw_value)
     text = clean_browser_text(str(payload.get("text") or ""))
     if not text:
-        raise BrowserExtractionError("The selected tab did not expose readable visible text.")
+        raise BrowserExtractionError("所选标签页没有提供可读取的可见文本。")
     return BrowserPageText(
-        title=str(payload.get("title") or fallback_title or "Browser Page").strip(),
+        title=str(payload.get("title") or fallback_title or "浏览器页面").strip(),
         url=str(payload.get("url") or fallback_url),
         selector=str(payload.get("selector") or "unknown"),
         text=text,

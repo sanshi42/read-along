@@ -14,7 +14,7 @@ from read_along.storage import StoragePaths
 
 
 def _create_text_pdf(tmp_path: Path, text: str, file_name: str = "test.pdf") -> str:
-    """Create a single-page text PDF at the given path."""
+    """在指定路径创建单页文本型 PDF。"""
     file_path = tmp_path / file_name
     doc = pymupdf.open()
     page = doc.new_page()
@@ -25,7 +25,7 @@ def _create_text_pdf(tmp_path: Path, text: str, file_name: str = "test.pdf") -> 
 
 
 def _repo_and_uploads(tmp_path: Path) -> tuple[Repository, Path]:
-    """Create a Repository and uploads directory for testing."""
+    """创建用于测试的 Repository 和上传目录。"""
     home = tmp_path / "data"
     paths = StoragePaths.from_config(AppConfig(home=home))
     initialize_database(paths)
@@ -54,7 +54,7 @@ class TestImportPdf:
 
         para = result.paragraphs[0]
         assert para.index == 1
-        assert para.source_label == "Page 1, Block 1"
+        assert para.source_label == "第 1 页，第 1 段"
         assert para.sentences
         assert len(para.sentences) == 2
         assert para.sentences[0].text == "Hello world."
@@ -63,7 +63,7 @@ class TestImportPdf:
         assert para.sentences[1].index == 2
 
     def test_multi_page_import(self, tmp_path: Path) -> None:
-        """Verify a two-page PDF produces two paragraphs."""
+        """验证两页 PDF 生成两个段落。"""
         file_path = tmp_path / "two_page.pdf"
         doc = pymupdf.open()
         page1 = doc.new_page()
@@ -83,8 +83,8 @@ class TestImportPdf:
         )
 
         assert len(result.paragraphs) == 2
-        assert result.paragraphs[0].source_label == "Page 1, Block 1"
-        assert result.paragraphs[1].source_label == "Page 2, Block 1"
+        assert result.paragraphs[0].source_label == "第 1 页，第 1 段"
+        assert result.paragraphs[1].source_label == "第 2 页，第 1 段"
         assert "Page one." in result.paragraphs[0].text
         assert "Page two." in result.paragraphs[1].text
 
@@ -99,7 +99,7 @@ class TestImportPdf:
             uploads_dir=uploads_dir,
         )
 
-        # Open a fresh repository against the same database
+        # 使用同一数据库打开新的 repository
         refreshed = Repository(repo.database)
         material = refreshed.get_material(result.id)
         assert material is not None
@@ -130,11 +130,11 @@ class TestImportPdf:
         assert expected_copy.stat().st_size > 0
 
     def test_empty_pdf_raises_value_error(self, tmp_path: Path) -> None:
-        """A PDF with no text should raise ValueError."""
+        """没有文本的 PDF 应抛出 ValueError。"""
         _create_text_pdf(tmp_path, "", file_name="empty.pdf")
         repo, uploads_dir = _repo_and_uploads(tmp_path)
 
-        with pytest.raises(ValueError, match="extractable text"):
+        with pytest.raises(ValueError, match="不包含可提取文本"):
             import_pdf(
                 file_path=tmp_path / "empty.pdf",
                 filename="empty.pdf",
@@ -143,7 +143,7 @@ class TestImportPdf:
             )
 
     def test_idempotent_material_id(self, tmp_path: Path) -> None:
-        """Re-importing the same PDF name should produce the same material_id."""
+        """重复导入同名 PDF 应生成相同的 material_id。"""
         _create_text_pdf(tmp_path, "Some text.")
         repo1, uploads_dir1 = _repo_and_uploads(tmp_path / "r1")
 
@@ -165,7 +165,7 @@ class TestImportPdf:
         assert result1.id == result2.id
 
     def test_sentences_extracted_in_order(self, tmp_path: Path) -> None:
-        """Multiple text blocks on a page should produce sentences in order."""
+        """页面上的多个文本块应按顺序生成句子。"""
         file_path = tmp_path / "ordered.pdf"
         doc = pymupdf.open()
         page = doc.new_page()
@@ -183,14 +183,14 @@ class TestImportPdf:
             uploads_dir=uploads_dir,
         )
 
-        # Sentences should be in order
+        # 句子应保持原有顺序
         all_sentences = [s.text for p in result.paragraphs for s in p.sentences]
         assert "First sentence." in all_sentences
         assert "Second sentence." in all_sentences
 
 
     def test_noise_lines_filtered(self, tmp_path: Path) -> None:
-        """Noise lines like '上一篇' should be filtered from the imported text."""
+        """导入文本时应过滤“上一篇”等噪声行。"""
         file_path = tmp_path / "noise.pdf"
         doc = pymupdf.open()
         page = doc.new_page()
@@ -209,7 +209,7 @@ class TestImportPdf:
             uploads_dir=uploads_dir,
         )
 
-        # Should have filtered out "上一篇"
+        # 应已过滤“上一篇”
         all_text = " ".join(s.text for p in result.paragraphs for s in p.sentences)
         assert "上一篇" not in all_text
         assert "Real content." in all_text

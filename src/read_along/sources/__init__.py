@@ -1,1 +1,1 @@
-"""Source-specific content adapters."""
+"""来源专用内容适配器。"""

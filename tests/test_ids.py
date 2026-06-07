@@ -7,7 +7,7 @@ from read_along.ids import (
 )
 
 
-# -- Material ID ------------------------------------------------------------
+# -- 材料 ID ---------------------------------------------------------------
 
 def test_material_id_is_deterministic() -> None:
     first = generate_material_id("url", "https://example.com/article")
@@ -34,7 +34,7 @@ def test_material_id_format() -> None:
     mid = generate_material_id("url", "https://example.com")
 
     assert mid.startswith("mat_")
-    assert len(mid) == 12  # 'mat_' + 8 hex chars
+    assert len(mid) == 12  # 'mat_' + 8 个十六进制字符
 
 
 def test_material_id_handles_unicode_uri() -> None:
@@ -44,7 +44,7 @@ def test_material_id_handles_unicode_uri() -> None:
     assert len(mid) == 12
 
 
-# -- Paragraph ID -----------------------------------------------------------
+# -- 段落 ID ---------------------------------------------------------------
 
 def test_paragraph_id_is_deterministic() -> None:
     first = generate_paragraph_id("mat_a1b2c3d4", 12)
@@ -84,11 +84,11 @@ def test_paragraph_id_large_index() -> None:
 
 
 def test_paragraph_id_rejects_negative_index() -> None:
-    with pytest.raises(ValueError, match="non-negative"):
+    with pytest.raises(ValueError, match="必须为非负数"):
         generate_paragraph_id("mat_a1b2c3d4", -1)
 
 
-# -- Sentence ID ------------------------------------------------------------
+# -- 句子 ID ---------------------------------------------------------------
 
 def test_sentence_id_is_deterministic() -> None:
     first = generate_sentence_id("mat_a1b2c3d4", 256)
@@ -128,11 +128,11 @@ def test_sentence_id_large_index() -> None:
 
 
 def test_sentence_id_rejects_negative_index() -> None:
-    with pytest.raises(ValueError, match="non-negative"):
+    with pytest.raises(ValueError, match="必须为非负数"):
         generate_sentence_id("mat_a1b2c3d4", -1)
 
 
-# -- Cross-entity consistency -----------------------------------------------
+# -- 跨实体一致性 ----------------------------------------------------------
 
 def test_ids_are_globally_unique() -> None:
     mid = generate_material_id("url", "https://example.com")
@@ -144,11 +144,11 @@ def test_ids_are_globally_unique() -> None:
         generate_sentence_id(mid, i) for i in range(10)
     }
 
-    # Material ID differs from any paragraph or sentence ID.
+    # 材料 ID 与任意段落或句子 ID 均不相同。
     assert mid not in paragraph_ids
     assert mid not in sentence_ids
 
-    # Paragraph and sentence IDs do not overlap for the same index.
+    # 相同索引下的段落和句子 ID 不重叠。
     assert not paragraph_ids & sentence_ids
 
 

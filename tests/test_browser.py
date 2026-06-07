@@ -1,13 +1,16 @@
 import json
+import urllib.error
 
 import pytest
 
+from read_along import browser
 from read_along.browser import (
     BrowserExtractionError,
     BrowserTab,
     EXTRACT_PAGE_SCRIPT,
     clean_browser_text,
     devtools_origin,
+    fetch_tabs,
     page_text_from_payload,
     select_tab,
 )
@@ -45,6 +48,22 @@ def test_select_tab_requires_narrow_match() -> None:
 
     selected = select_tab(tabs, url_contains="/course/b")
     assert selected.title == "课程 B"
+
+
+def test_fetch_tabs_preserves_original_connection_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_to_open(*args: object, **kwargs: object) -> None:
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(browser.urllib.request, "urlopen", fail_to_open)
+
+    with pytest.raises(BrowserExtractionError) as exc_info:
+        fetch_tabs()
+
+    message = str(exc_info.value)
+    assert "无法连接 Chrome DevTools" in message
+    assert "connection refused" in message
 
 
 def test_devtools_origin_matches_websocket_endpoint() -> None:

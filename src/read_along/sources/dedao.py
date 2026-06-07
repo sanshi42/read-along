@@ -28,11 +28,11 @@ DEDAO_NOISE_LINE_PATTERNS = [
 
 
 def supports_url(url: str) -> bool:
-    """Return whether this adapter handles the URL."""
+    """返回此适配器是否支持指定 URL。"""
     hostname = urllib.parse.urlparse(url).hostname or ""
     return hostname in DEDAO_HOSTS or hostname.endswith(".dedao.cn")
 
 
 def clean_text(text: str) -> str:
-    """Remove generic and Dedao-specific visible-page noise."""
+    """移除通用及得到专用的可见页面噪声。"""
     return clean_browser_text(text, GENERIC_NOISE_LINE_PATTERNS + DEDAO_NOISE_LINE_PATTERNS)
