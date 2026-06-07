@@ -31,7 +31,8 @@ src/read_along/
   config.py             # 本地数据目录、环境配置
   db.py                 # SQLite 初始化和连接
   models.py             # Pydantic DTO
-  repository.py         # 数据读写
+  material_library.py   # 阅读材料完整持久化生命周期
+  repository.py         # SQLite 细粒度读写，仅供材料库 Module 内部使用
   browser.py            # 通用 Chrome 会话桥接
   importers.py          # URL/PDF 导入入口
   extractors.py         # 正文清洗、段落/句子切分
@@ -84,15 +85,39 @@ READ_ALONG_HOME=/path/to/data
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| id | text pk | 稳定材料 ID，基于来源和内容哈希生成。 |
-| source_type | text | `url` 或 `pdf`。 |
-| source_uri | text | URL 或本地上传文件名。 |
+| id | text pk | 稳定材料 ID，基于结构化正文哈希生成。 |
 | title | text | 材料标题。 |
-| status | text | `importing`、`ready`、`failed`。 |
 | content_hash | text | 清洗后正文哈希，用于去重。 |
-| error_message | text nullable | 导入失败原因。 |
 | created_at | text | ISO 时间。 |
 | updated_at | text | ISO 时间。 |
+
+阅读材料只表示已成功原子保存的结果，不保存导入状态或导入错误。`queued`、`running`、`done`、`failed` 和错误信息属于 `import_jobs`。
+
+### material_sources
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| id | text pk | 来源身份 ID。 |
+| material_id | text fk | 所属阅读材料。 |
+| source_type | text | `url` 或 `pdf`。 |
+| source_key | text | 同一来源的稳定身份键。 |
+| source_uri | text | 用于展示和回查的 URL 或上传文件名。 |
+| source_path | text nullable | 材料库管理的内部源文件路径。 |
+| is_primary | integer | 是否为首次导入的主来源。 |
+| created_at | text | ISO 时间。 |
+
+同一 `source_type` 和 `source_key` 只能对应一个来源身份；一篇阅读材料可以关联多个来源身份。
+
+关键不变量：
+
+- `materials.content_hash` 唯一，同一结构化正文只对应一篇阅读材料。
+- 每篇阅读材料恰好有一个主来源。
+- 来源身份一旦关联阅读材料，不会被导入行为重新指向其他阅读材料。
+
+来源键生成规则：
+
+- URL：规范化 URL，移除 fragment，规范化 scheme、host 和默认端口，保留 path 和 query。
+- PDF：上传文件字节的 SHA-256；`source_uri` 保留原文件名。
 
 ### paragraphs
 
@@ -174,8 +199,16 @@ READ_ALONG_HOME=/path/to/data
 {
   "id": "mat_xxx",
   "title": "文章标题",
-  "source_type": "url",
-  "source_uri": "https://example.com/article",
+  "primary_source": {
+    "source_type": "url",
+    "source_uri": "https://example.com/article"
+  },
+  "sources": [
+    {
+      "source_type": "url",
+      "source_uri": "https://example.com/article"
+    }
+  ],
   "progress": {
     "sentence_id": "S000001",
     "playback_rate": 1.0
@@ -198,6 +231,74 @@ READ_ALONG_HOME=/path/to/data
 }
 ```
 
+## 材料库持久化 Module
+
+材料库持久化 Module 是阅读材料持久化的外部 seam。PDF、网页和得到导入 Module 只生成不含持久化字段的 `ReadingMaterialDraft`；调用方不理解 SQLite、事务、ID 分配、时间戳、文件布局或材料详情组装。
+
+### 外部 Interface
+
+```python
+class MaterialLibrary:
+    def save(self, draft: ReadingMaterialDraft) -> MaterialDetail: ...
+    def list_shelf(self) -> list[MaterialSummary]: ...
+    def get(self, material_id: str) -> MaterialDetail: ...
+    def save_progress(
+        self,
+        material_id: str,
+        sentence_id: str,
+        playback_rate: float,
+    ) -> ReadingProgress: ...
+    def delete(self, material_id: str) -> None: ...
+```
+
+- `save` 原子保存完整阅读材料，或在重复导入时返回现有阅读材料。
+- `list_shelf` 返回按最近更新时间排序的书架摘要。
+- `get` 返回包含有序段落、有序句子和阅读进度的完整阅读视图。
+- `save_progress` 验证材料、句子归属和倍速后原子覆盖阅读进度。
+- `delete` 幂等删除阅读材料，并在提交后清理源文件和音频缓存。
+- 独立段落和句子查询属于材料库 Module 的内部 Interface，不向通用调用方暴露。
+
+### 保存 Draft
+
+`ReadingMaterialDraft` 只包含来源事实、可选源文件和结构化正文：
+
+- `source_type`、`source_uri`、`title`。
+- 可选 `source_file`；调用方始终保留原文件所有权。
+- 有序段落；每段包含正文、可选来源标记和有序句子文本。
+- 不包含 ID、全局顺序、`content_hash`、状态、时间戳、音频字段或阅读进度。
+
+材料库 Module 验证 Draft，基于来源事实生成 `source_key`，基于结构化正文计算 `content_hash`，并生成全部持久化字段。
+
+### 重复导入
+
+- 来源相同且结构化正文相同：返回现有阅读材料。
+- 来源不同但结构化正文相同：新增来源身份并返回现有阅读材料。
+- 来源相同但结构化正文不同：返回 `SourceChangedError`，不覆盖正文、进度或音频。
+- 刷新已有来源是后续独立能力。
+- 阅读材料保留首次导入的标题；新增来源身份不覆盖标题。
+- 书架和阅读视图展示首次导入的主来源，同时可以返回全部来源身份。
+- 为现有阅读材料新增来源身份时，不复制新的源文件，新增来源身份的 `source_path` 为空。
+
+### 原子性与文件
+
+- 调用返回成功前，阅读材料对调用方完全不可见。
+- 阅读材料、来源身份、段落和句子在一个 SQLite 事务中保存。
+- 源文件复制到材料库临时路径，在数据库事务提交前原子重命名到最终路径。
+- 数据库提交失败时删除最终文件；进程中断最多留下可清理的孤立文件。
+- 任一步失败都回滚数据库并清理临时文件。
+- 进程中断不留下部分可见阅读材料；启动时清理孤立文件。
+- 删除时先事务删除数据库记录，再尽力清理源文件和音频缓存；清理失败记录可重试任务。
+
+### 错误模式
+
+- `InvalidDraftError`：结构化正文为空、不一致或字段非法。
+- `SourceChangedError`：来源相同但结构化正文不同。
+- `MaterialNotFoundError`：读取或保存进度时阅读材料不存在。
+- `InvalidProgressError`：句子不属于阅读材料或倍速非法。
+- `MaterialLibraryError`：SQLite、文件复制、事务等 Implementation 失败。
+
+导入失败不持久化 `failed` 阅读材料；失败状态由未来的导入任务 Module 记录。
+
 ## 核心流程
 
 ### URL 导入
@@ -208,17 +309,17 @@ READ_ALONG_HOME=/path/to/data
    - `auto`：Scrapling 抓取公开网页并抽取正文。
    - `chrome`：连接用户手动启动并登录的专用 Chrome 会话，读取页面可见正文。
 4. 清理导航、按钮、评论区、页脚等明显噪声。
-5. 切分段落和句子，生成 `material_id`、`paragraph_id`、`sentence_id`。
-6. 写入 SQLite。
+5. 切分段落和句子，形成结构化正文。
+6. 将来源事实和结构化正文提交给材料库持久化 Module 原子保存。
 7. 更新任务状态为 `done`。
 
 ### PDF 导入
 
 1. 前端上传 PDF。
-2. 后端保存到 `uploads/`。
+2. 后端将上传内容保存到调用方临时文件。
 3. PyMuPDF 逐页提取文本。
 4. 若提取不到有效文本，任务失败并提示“不支持扫描版 PDF”。
-5. 按段落和句子结构化后保存。
+5. 按段落和句子结构化后提交给材料库持久化 Module 原子保存。
 
 ### 音频生成
 
