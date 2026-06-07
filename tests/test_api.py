@@ -1,11 +1,13 @@
 from pathlib import Path
 
 import pymupdf
+import pytest
 from fastapi.testclient import TestClient
 
 from read_along.api import create_app, get_material_library
 from read_along.config import AppConfig
 from read_along.db import initialize_database
+from read_along.importers import UrlImportError
 from read_along.material_library import MaterialLibrary
 from read_along.models import MaterialDetail, ReadingMaterialDraft, ReadingMaterialDraftParagraph, SourceType
 from read_along.storage import StoragePaths
@@ -109,6 +111,66 @@ def test_pdf_import_uses_material_library(tmp_path: Path) -> None:
     assert response.status_code == 200
     material_id = response.json()["id"]
     assert library.get(material_id).primary_source.source_uri == "example.pdf"
+
+
+def test_url_import_uses_material_library(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = _make_library(tmp_path)
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+
+    def fake_import_url(
+        *,
+        url: str,
+        mode: str,
+        library: MaterialLibrary,
+    ) -> MaterialDetail:
+        assert url == "https://example.com/article"
+        assert mode == "auto"
+        return _save_url_material(library)
+
+    monkeypatch.setattr("read_along.api.import_url", fake_import_url)
+
+    response = client.post(
+        "/api/import/url",
+        json={"url": "https://example.com/article"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "示例文章"
+    assert response.json()["primary_source"]["source_type"] == "url"
+    assert response.json()["paragraphs"][0]["sentences"][0]["text"] == "第一句。"
+
+
+def test_url_import_returns_chinese_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = _make_library(tmp_path)
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+
+    def fail_import_url(
+        *,
+        url: str,
+        mode: str,
+        library: MaterialLibrary,
+    ) -> MaterialDetail:
+        raise UrlImportError("网页正文为空或无法抽取。")
+
+    monkeypatch.setattr("read_along.api.import_url", fail_import_url)
+
+    response = client.post(
+        "/api/import/url",
+        json={"url": "https://example.com/empty"},
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "网页正文为空或无法抽取。"}
 
 
 def _make_library(tmp_path: Path) -> MaterialLibrary:

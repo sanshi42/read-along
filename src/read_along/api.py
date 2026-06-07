@@ -6,13 +6,19 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from read_along import __version__
 from read_along.config import load_config
 from read_along.db import initialize_database
-from read_along.importers import import_pdf
-from read_along.material_library import InvalidDraftError, MaterialLibrary, MaterialNotFoundError
+from read_along.importers import UrlImportError, import_pdf, import_url
+from read_along.material_library import InvalidDraftError, MaterialLibrary, MaterialNotFoundError, SourceChangedError
 from read_along.storage import StoragePaths
+
+
+class UrlImportRequest(BaseModel):
+    url: str
+    mode: str = "auto"
 
 
 class AppState:
@@ -126,6 +132,31 @@ def create_app() -> FastAPI:
         finally:
             # 清理临时文件
             tmp_path.unlink(missing_ok=True)
+
+    @app.post("/api/import/url")
+    def import_url_endpoint(
+        request: UrlImportRequest,
+        *,
+        library: MaterialLibrary = Depends(get_material_library),
+    ) -> Any:
+        """导入公开网页 URL 并保存为阅读材料。"""
+        try:
+            result = import_url(
+                url=request.url,
+                mode=request.mode,
+                library=library,
+            )
+            return result.model_dump(mode="json")
+        except SourceChangedError as exc:
+            return JSONResponse(
+                status_code=409,
+                content={"detail": str(exc)},
+            )
+        except (InvalidDraftError, UrlImportError, ValueError) as exc:
+            return JSONResponse(
+                status_code=422,
+                content={"detail": str(exc)},
+            )
 
     return app
 

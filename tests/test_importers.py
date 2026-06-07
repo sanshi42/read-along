@@ -6,7 +6,7 @@ import pytest
 
 from read_along.config import AppConfig
 from read_along.db import initialize_database
-from read_along.importers import import_pdf
+from read_along.importers import UrlImportError, WebPageContent, import_pdf, import_url
 from read_along.material_library import MaterialLibrary
 from read_along.models import MaterialDetail, SourceType
 from read_along.storage import StoragePaths
@@ -193,3 +193,81 @@ class TestImportPdf:
         assert "上一篇" not in all_text
         assert "Real content." in all_text
         assert "More content." in all_text
+
+
+class TestImportUrl:
+    def test_basic_import(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """公开网页正文应结构化后保存为 URL 来源材料。"""
+        library = _library(tmp_path)
+
+        def fake_fetch(url: str) -> WebPageContent:
+            assert url == "https://example.com/article"
+            return WebPageContent(
+                title="示例网页",
+                url=url,
+                text=(
+                    "分享\n"
+                    "第一段正文讲述一个值得阅读的公开网页内容。第二句继续补充信息。\n\n"
+                    "最新评论\n"
+                    "第二段正文提供后续细节。"
+                ),
+            )
+
+        monkeypatch.setattr("read_along.importers.fetch_webpage", fake_fetch)
+
+        result = import_url(
+            url="https://example.com/article",
+            library=library,
+        )
+
+        assert result.primary_source.source_type == SourceType.URL
+        assert result.primary_source.source_uri == "https://example.com/article"
+        assert result.title == "示例网页"
+        assert len(result.paragraphs) == 2
+        assert result.paragraphs[0].source_label == "网页正文，第 1 段"
+        all_text = " ".join(sentence.text for paragraph in result.paragraphs for sentence in paragraph.sentences)
+        assert "分享" not in all_text
+        assert "最新评论" not in all_text
+        assert "第一段正文" in all_text
+
+    def test_empty_body_raises_url_import_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """正文为空或只有噪声时应返回网页导入错误。"""
+        library = _library(tmp_path)
+
+        monkeypatch.setattr(
+            "read_along.importers.fetch_webpage",
+            lambda url: WebPageContent(title="空网页", url=url, text="分享\n评论\n上一篇"),
+        )
+
+        with pytest.raises(UrlImportError, match="网页正文为空"):
+            import_url(
+                url="https://example.com/empty",
+                library=library,
+            )
+
+    def test_rejects_unsupported_mode(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+
+        with pytest.raises(UrlImportError, match="仅支持公开网页自动导入"):
+            import_url(
+                url="https://example.com/article",
+                mode="chrome",
+                library=library,
+            )
+
+    def test_rejects_non_http_url(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+
+        with pytest.raises(UrlImportError, match="HTTP 或 HTTPS"):
+            import_url(
+                url="file:///tmp/article.html",
+                library=library,
+            )

@@ -32,8 +32,8 @@ export interface MaterialDetail extends MaterialSummary {
   }>;
 }
 
-async function request<T>(path: string): Promise<T> {
-  const response = await fetch(path);
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(path, options);
   if (!response.ok) {
     let message = `请求失败（${response.status}）`;
     try {
@@ -55,4 +55,14 @@ export function listMaterials(): Promise<MaterialSummary[]> {
 
 export function getMaterial(materialId: string): Promise<MaterialDetail> {
   return request<MaterialDetail>(`/api/materials/${encodeURIComponent(materialId)}`);
+}
+
+export function importUrl(url: string): Promise<MaterialDetail> {
+  return request<MaterialDetail>("/api/import/url", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ url, mode: "auto" }),
+  });
 }

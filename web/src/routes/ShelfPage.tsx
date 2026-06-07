@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { listMaterials, type MaterialSummary } from "../api";
+import { importUrl, listMaterials, type MaterialSummary } from "../api";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   month: "short",
@@ -15,6 +15,10 @@ function sourceLabel(material: MaterialSummary) {
 export function ShelfPage() {
   const [materials, setMaterials] = useState<MaterialSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [url, setUrl] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -34,6 +38,35 @@ export function ShelfPage() {
     };
   }, []);
 
+  async function handleUrlImport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextUrl = url.trim();
+    if (!nextUrl) {
+      setImportError("请输入网页 URL");
+      setImportMessage(null);
+      return;
+    }
+
+    setImporting(true);
+    setImportError(null);
+    setImportMessage(null);
+    try {
+      const imported = await importUrl(nextUrl);
+      setMaterials((current) => {
+        if (!current) {
+          return [imported];
+        }
+        return [imported, ...current.filter((item) => item.id !== imported.id)];
+      });
+      setUrl("");
+      setImportMessage(`已导入：${imported.title}`);
+    } catch (reason: unknown) {
+      setImportError(reason instanceof Error ? reason.message : "网页导入失败");
+    } finally {
+      setImporting(false);
+    }
+  }
+
   return (
     <main className="page-shell">
       <header className="page-header">
@@ -47,6 +80,40 @@ export function ShelfPage() {
           仅保存在本机
         </div>
       </header>
+
+      <section className="import-band" aria-labelledby="url-import-heading">
+        <div>
+          <p className="eyebrow">导入</p>
+          <h2 id="url-import-heading">公开网页</h2>
+        </div>
+        <form className="url-import-form" onSubmit={handleUrlImport}>
+          <label htmlFor="url-input">网页 URL</label>
+          <div className="url-import-row">
+            <input
+              id="url-input"
+              type="url"
+              inputMode="url"
+              placeholder="https://example.com/article"
+              value={url}
+              disabled={importing}
+              onChange={(event) => setUrl(event.target.value)}
+            />
+            <button type="submit" disabled={importing}>
+              {importing ? "导入中" : "导入"}
+            </button>
+          </div>
+          {importError ? (
+            <p className="import-feedback import-feedback-error" role="alert">
+              {importError}
+            </p>
+          ) : null}
+          {importMessage ? (
+            <p className="import-feedback" aria-live="polite">
+              {importMessage}
+            </p>
+          ) : null}
+        </form>
+      </section>
 
       <section aria-labelledby="shelf-heading">
         <div className="section-heading">
@@ -80,7 +147,7 @@ export function ShelfPage() {
             </div>
             <p className="eyebrow">书架还是空的</p>
             <h2>先导入一篇值得阅读的材料</h2>
-            <p>当前可通过后端 PDF 导入接口添加文本型 PDF，导入后会显示在这里。</p>
+            <p>在上方输入公开网页 URL，或通过后端 PDF 导入接口添加文本型 PDF。</p>
           </section>
         ) : null}
 
