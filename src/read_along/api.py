@@ -11,7 +11,7 @@ from read_along import __version__
 from read_along.config import load_config
 from read_along.db import initialize_database
 from read_along.importers import import_pdf
-from read_along.material_library import InvalidDraftError, MaterialLibrary
+from read_along.material_library import InvalidDraftError, MaterialLibrary, MaterialNotFoundError
 from read_along.storage import StoragePaths
 
 
@@ -69,6 +69,27 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "read-along"}
+
+    @app.get("/api/materials")
+    def list_materials(
+        *,
+        library: MaterialLibrary = Depends(get_material_library),
+    ) -> Any:
+        return [material.model_dump(mode="json") for material in library.list_shelf()]
+
+    @app.get("/api/materials/{material_id}")
+    def get_material(
+        material_id: str,
+        *,
+        library: MaterialLibrary = Depends(get_material_library),
+    ) -> Any:
+        try:
+            return library.get(material_id).model_dump(mode="json")
+        except MaterialNotFoundError as exc:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": str(exc)},
+            )
 
     @app.post("/api/import/pdf")
     async def import_pdf_endpoint(

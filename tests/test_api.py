@@ -7,6 +7,7 @@ from read_along.api import create_app, get_material_library
 from read_along.config import AppConfig
 from read_along.db import initialize_database
 from read_along.material_library import MaterialLibrary
+from read_along.models import MaterialDetail, ReadingMaterialDraft, ReadingMaterialDraftParagraph, SourceType
 from read_along.storage import StoragePaths
 
 
@@ -17,6 +18,59 @@ def test_health_endpoint() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "service": "read-along"}
+
+
+def test_material_list_returns_empty_shelf(tmp_path: Path) -> None:
+    library = _make_library(tmp_path)
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+
+    response = client.get("/api/materials")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_material_list_returns_saved_material(tmp_path: Path) -> None:
+    library = _make_library(tmp_path)
+    material = _save_url_material(library)
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+
+    response = client.get("/api/materials")
+
+    assert response.status_code == 200
+    assert response.json()[0]["id"] == material.id
+    assert response.json()[0]["title"] == "示例文章"
+    assert response.json()[0]["primary_source"]["source_uri"] == "https://example.com/article"
+
+
+def test_material_detail_returns_saved_material(tmp_path: Path) -> None:
+    library = _make_library(tmp_path)
+    material = _save_url_material(library)
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+
+    response = client.get(f"/api/materials/{material.id}")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == material.id
+    assert response.json()["paragraphs"][0]["sentences"][0]["text"] == "第一句。"
+
+
+def test_material_detail_returns_chinese_not_found_error(tmp_path: Path) -> None:
+    library = _make_library(tmp_path)
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+
+    response = client.get("/api/materials/mat_missing")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "阅读材料不存在：mat_missing"}
 
 
 def test_pdf_import_rejects_non_pdf_with_chinese_detail() -> None:
@@ -55,3 +109,25 @@ def test_pdf_import_uses_material_library(tmp_path: Path) -> None:
     assert response.status_code == 200
     material_id = response.json()["id"]
     assert library.get(material_id).primary_source.source_uri == "example.pdf"
+
+
+def _make_library(tmp_path: Path) -> MaterialLibrary:
+    paths = StoragePaths.from_config(AppConfig(home=tmp_path / "data"))
+    initialize_database(paths)
+    return MaterialLibrary(paths)
+
+
+def _save_url_material(library: MaterialLibrary) -> MaterialDetail:
+    return library.save(
+        ReadingMaterialDraft(
+            source_type=SourceType.URL,
+            source_uri="https://example.com/article",
+            title="示例文章",
+            paragraphs=[
+                ReadingMaterialDraftParagraph(
+                    text="第一句。 第二句。",
+                    sentences=["第一句。", "第二句。"],
+                ),
+            ],
+        )
+    )

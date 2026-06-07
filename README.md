@@ -24,12 +24,22 @@ uv run --no-editable read-along serve
 
 服务默认监听 `http://127.0.0.1:8765`，健康检查位于 `GET /api/health`。
 
+前端开发服务器需要另开终端启动：
+
+```bash
+npm install --prefix web
+npm run dev --prefix web
+```
+
+前端默认监听 `http://127.0.0.1:5173`，开发服务器会将 `/api` 请求代理到本地后端。
+
 ## 质量检查
 
 ```bash
 uv run --no-editable pytest
 uv run --no-editable ruff check .
 uv run --no-editable mypy src tests
+npm run build --prefix web
 ```
 
 产品范围、技术方案和迭代计划见 `docs/`；当前开发进度见 `tasks/progress.md`。
