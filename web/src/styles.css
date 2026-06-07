@@ -271,13 +271,19 @@ h1 {
 }
 
 .reader-nav {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding-bottom: 28px;
-  border-bottom: 1px solid rgba(75, 69, 59, 0.2);
+  padding: 16px 0;
+  border-bottom: 1px solid rgba(75, 69, 59, 0.15);
   color: #6f695e;
   font-size: 0.82rem;
+  background: rgba(243, 239, 230, 0.88);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .text-link {
@@ -320,23 +326,35 @@ h1 {
   font-size: 0.85rem;
 }
 
-.reader-placeholder {
-  padding: clamp(28px, 6vw, 52px);
-  border-top: 1px solid rgba(75, 69, 59, 0.2);
-  border-bottom: 1px solid rgba(75, 69, 59, 0.2);
+.reader-content {
+  max-width: 42rem;
+  margin: 0 auto;
 }
 
-.reader-placeholder h2 {
+.reader-paragraph {
+  margin-bottom: 1.8em;
+}
+
+.reader-paragraph p {
   margin: 0;
-  font-size: clamp(1.7rem, 5vw, 2.8rem);
-  font-weight: 600;
+  font-size: 1.1rem;
+  line-height: 2;
 }
 
-.reader-placeholder p:last-child {
-  max-width: 38rem;
-  margin: 18px 0 0;
-  color: #706a60;
-  line-height: 1.8;
+.reader-sentence {
+  cursor: pointer;
+  border-radius: 2px;
+  transition: opacity 140ms ease;
+}
+
+.reader-sentence:hover {
+  opacity: 0.64;
+}
+
+.reader-sentence:focus-visible {
+  outline: 2px solid #8b5e34;
+  outline-offset: 2px;
+  opacity: 1;
 }
 
 @media (max-width: 800px) {

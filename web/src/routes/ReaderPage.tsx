@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { getMaterial, type MaterialDetail } from "../api";
@@ -11,6 +11,7 @@ export function ReaderPage() {
   const { materialId } = useParams();
   const [material, setMaterial] = useState<MaterialDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [currentSentenceId, setCurrentSentenceId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!materialId) {
@@ -34,6 +35,10 @@ export function ReaderPage() {
       active = false;
     };
   }, [materialId]);
+
+  const handleSentenceClick = useCallback((sentenceId: string) => {
+    setCurrentSentenceId(sentenceId);
+  }, []);
 
   return (
     <main className="reader-shell">
@@ -66,11 +71,37 @@ export function ReaderPage() {
             <h1>{material.title}</h1>
             <p className="reader-source">{material.primary_source.source_uri}</p>
           </header>
-          <section className="reader-placeholder">
-            <p className="eyebrow">阅读页入口已就绪</p>
-            <h2>正文阅读界面将在下一任务实现</h2>
-            <p>材料详情已经成功载入。下一步会在这里按段落和句子展示正文。</p>
-          </section>
+          <div className="reader-content">
+            {material.paragraphs.map((paragraph) => (
+              <section key={paragraph.id} className="reader-paragraph">
+                <p>
+                  {paragraph.sentences.map((sentence) => (
+                    <span
+                      key={sentence.id}
+                      id={sentence.id}
+                      role="button"
+                      tabIndex={0}
+                      className={
+                        "reader-sentence" +
+                        (sentence.id === currentSentenceId
+                          ? " reader-sentence-active"
+                          : "")
+                      }
+                      onClick={() => handleSentenceClick(sentence.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          handleSentenceClick(sentence.id);
+                        }
+                      }}
+                    >
+                      {sentence.text}
+                    </span>
+                  ))}
+                </p>
+              </section>
+            ))}
+          </div>
         </article>
       ) : null}
     </main>
