@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-Sprint 2 已启动，公开网页 URL 导入已落地。现在可以在书架页输入公开网页 URL，将 Scrapling 抽取的正文保存为本地阅读材料；下一步继续得到单篇导入。
+Sprint 2 已启动，公开网页 URL 导入已落地，并完成指定得到单篇 URL 的 URL-only 抽取验证。目标得到 URL 静态直抓返回 SPA 空壳且 `isLogin:false`，不含文章正文；完整得到单篇导入仍需后续 Chrome 会话桥接。
 
 ## 已完成
 
@@ -27,10 +27,11 @@ Sprint 2 已启动，公开网页 URL 导入已落地。现在可以在书架页
 | 014 | 前端骨架 | Done | React + Vite + TypeScript、真实书架页、阅读页入口、材料只读 API |
 | 015 | 阅读页正文展示 | Done | 阅读页段落/句子渲染、可定位句子节点、可点击句子、sticky 导航、正文排版 |
 | 016 | 公开网页 URL 导入 | Done | Scrapling 抓取公开网页、URL 导入 API、书架导入表单、121 个测试 |
+| 017 | 得到单篇 URL 抽取目标验证 | Done | `scrapling[fetchers]` 依赖、得到 URL 清洗接入、目标 URL 直抓边界确认、123 个测试 |
 
 ## 当前任务
 
-无。`016-url-import` 已完成。
+无。`017-dedao-url-target` 已完成。
 
 ## 下一步
 
@@ -40,10 +41,11 @@ Sprint 2 已启动，公开网页 URL 导入已落地。现在可以在书架页
 
 ## 阻塞项
 
-无。
+指定得到 URL 在 URL-only 模式下无法取得完整正文：Scrapling 静态直抓返回 HTTP 200，但 HTML 只有 SPA 容器和 `isLogin:false` 初始化状态，没有文章正文。若要导入该页面完整内容，需要进入 `MVP-014` Chrome 会话桥接，且不保存 Cookie、账号密码或导出的浏览器凭据。
 
 ## 最近变更记录
 
+- 2026-06-07：完成指定得到单篇 URL 的 URL-only 抽取验证；补齐 Scrapling fetchers 依赖，得到 URL 导入前接入专用清洗，目标 URL 直抓确认返回 SPA 空壳无正文，新增明确错误提示，123 个测试通过，Ruff、mypy 和前端构建通过。
 - 2026-06-07：完成公开网页 URL 导入；新增 Scrapling 抓取和正文候选抽取、`POST /api/import/url`、书架页 URL 导入表单，`MVP-013` 标记完成，121 个测试通过，Ruff、mypy、前端构建和浏览器验收通过。
 - 2026-06-07：完成阅读页正文展示；阅读页按段落和句子渲染结构化正文，句子节点可定位可点击，sticky 导航，正文排版落地，115 个测试通过。
 - 2026-06-07：完成前端骨架；新增 React + Vite + TypeScript、真实书架页、阅读页入口和材料只读 API，浏览器验收通过，115 个测试通过。

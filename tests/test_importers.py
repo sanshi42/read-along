@@ -271,3 +271,62 @@ class TestImportUrl:
                 url="file:///tmp/article.html",
                 library=library,
             )
+
+    def test_dedao_url_uses_dedao_cleaning(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """得到 URL 应在结构化前应用得到专用清洗规则。"""
+        target_url = "https://www.dedao.cn/course/article?id=obyrmnqGdwxkXWMa0VelBz2D5ZO8aN"
+        library = _library(tmp_path)
+
+        def fake_fetch(url: str) -> WebPageContent:
+            assert url == target_url
+            return WebPageContent(
+                title="得到单篇",
+                url=target_url,
+                text=(
+                    "得到\n"
+                    "课程目录\n"
+                    "这是一段来自得到单篇的正文内容。它应该进入阅读材料。\n\n"
+                    "下一讲\n"
+                    "写留言\n"
+                    "第二段正文继续说明课程里的关键观点。"
+                ),
+            )
+
+        monkeypatch.setattr("read_along.importers.fetch_webpage", fake_fetch)
+
+        result = import_url(
+            url=target_url,
+            library=library,
+        )
+
+        all_text = " ".join(sentence.text for paragraph in result.paragraphs for sentence in paragraph.sentences)
+        assert result.primary_source.source_uri == target_url
+        assert "课程目录" not in all_text
+        assert "下一讲" not in all_text
+        assert "写留言" not in all_text
+        assert "得到单篇的正文内容" in all_text
+        assert "第二段正文" in all_text
+
+    def test_empty_dedao_body_returns_specific_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """得到 URL 直抓无正文时应说明登录态或动态渲染边界。"""
+        target_url = "https://www.dedao.cn/course/article?id=obyrmnqGdwxkXWMa0VelBz2D5ZO8aN"
+        library = _library(tmp_path)
+
+        monkeypatch.setattr(
+            "read_along.importers.fetch_webpage",
+            lambda url: WebPageContent(title="得到", url=target_url, text=""),
+        )
+
+        with pytest.raises(UrlImportError, match="登录态或动态渲染"):
+            import_url(
+                url=target_url,
+                library=library,
+            )

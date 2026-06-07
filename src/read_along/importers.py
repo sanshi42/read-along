@@ -14,6 +14,7 @@ from read_along.models import (
     ReadingMaterialDraftParagraph,
     SourceType,
 )
+from read_along.sources import dedao
 
 _ARTICLE_SELECTORS = (
     "article",
@@ -81,8 +82,10 @@ def import_url(
 
     _validate_url(url)
     page = fetch_webpage(url)
-    paragraphs = _draft_paragraphs(page.text)
+    paragraphs = _draft_paragraphs(page.text, source_uri=page.url)
     if not paragraphs:
+        if dedao.supports_url(page.url):
+            raise UrlImportError("得到页面 URL 直抓未返回正文，可能需要登录态或动态渲染。")
         raise UrlImportError("网页正文为空或无法抽取。")
 
     return library.save(
@@ -100,7 +103,7 @@ def fetch_webpage(url: str) -> WebPageContent:
     try:
         from scrapling.fetchers import Fetcher
     except ImportError as exc:
-        raise UrlImportError("当前环境缺少 Scrapling，无法导入网页。") from exc
+        raise UrlImportError("当前环境缺少网页抓取依赖，无法导入网页。") from exc
 
     try:
         page = Fetcher.get(url, stealthy_headers=True, timeout=15)
@@ -113,6 +116,8 @@ def fetch_webpage(url: str) -> WebPageContent:
 
     text = _extract_main_text(page)
     if not text:
+        if dedao.supports_url(url):
+            raise UrlImportError("得到页面 URL 直抓未返回正文，可能需要登录态或动态渲染。")
         raise UrlImportError("网页正文为空或无法抽取。")
 
     return WebPageContent(
@@ -134,7 +139,14 @@ def _validate_url(url: str) -> None:
         raise UrlImportError("URL 不得包含用户名或密码。")
 
 
-def _draft_paragraphs(text: str) -> list[ReadingMaterialDraftParagraph]:
+def _draft_paragraphs(
+    text: str,
+    *,
+    source_uri: str,
+) -> list[ReadingMaterialDraftParagraph]:
+    if dedao.supports_url(source_uri):
+        text = dedao.clean_text(text)
+
     paragraphs: list[ReadingMaterialDraftParagraph] = []
     for block_number, sentences in enumerate(structure_text(text), start=1):
         if not sentences:
