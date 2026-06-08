@@ -1,10 +1,10 @@
 # Project Progress
 
-最后更新：2026-06-07
+最后更新：2026-06-08
 
 ## 当前状态
 
-Sprint 2 已启动，公开网页 URL 导入已落地，并完成指定得到单篇 URL 的 URL-only 抽取验证。目标得到 URL 静态直抓返回 SPA 空壳且 `isLogin:false`，不含文章正文；完整得到单篇导入仍需后续 Chrome 会话桥接。
+Sprint 2 继续推进。公开网页 URL 导入已在真实 01MVP 文档页复验通过；得到单篇 Chrome 导入路径已在 `main` 上恢复并修复标签页匹配、DevTools 失败 fallback 和得到专用清洗，当前等待用户在已登录 Chrome 中手动复验目标页面。
 
 ## 已完成
 
@@ -28,23 +28,26 @@ Sprint 2 已启动，公开网页 URL 导入已落地，并完成指定得到单
 | 015 | 阅读页正文展示 | Done | 阅读页段落/句子渲染、可定位句子节点、可点击句子、sticky 导航、正文排版 |
 | 016 | 公开网页 URL 导入 | Done | Scrapling 抓取公开网页、URL 导入 API、书架导入表单、121 个测试 |
 | 017 | 得到单篇 URL 抽取目标验证 | Done | `scrapling[fetchers]` 依赖、得到 URL 清洗接入、目标 URL 直抓边界确认、123 个测试 |
+| 018 | 修复公开网页和得到 Chrome 导入失败 | Done | 文档正文容器优先抽取、Chrome 标签页 query/path 重试、前台 Chrome fallback、目标公开 URL 复验、127 个测试 |
 
 ## 当前任务
 
-无。`017-dedao-url-target` 已完成。
+无。`018-url-import-failures` 已完成。
 
 ## 下一步
 
 继续 Sprint 2：网页导入与得到单篇支持：
 
-1. `MVP-014` 得到单篇导入：通过已登录的专用 Chrome 会话导入自己有权限访问的得到单篇课程页。
+1. 用户在本机用已登录 Chrome 复验 `https://www.dedao.cn/course/article?id=obyrmnqGdwxkXWMa0VelBz2D5ZO8aN` 的 Chrome 模式导入；通过后将 `MVP-014` 标记为 `Done`。
+2. `MVP-015` 重复导入：重复导入相同来源或相同结构化正文时，不生成重复材料，并给出清晰反馈。
 
 ## 阻塞项
 
-指定得到 URL 在 URL-only 模式下无法取得完整正文：Scrapling 静态直抓返回 HTTP 200，但 HTML 只有 SPA 容器和 `isLogin:false` 初始化状态，没有文章正文。若要导入该页面完整内容，需要进入 `MVP-014` Chrome 会话桥接，且不保存 Cookie、账号密码或导出的浏览器凭据。
+无代码阻塞。真实已登录得到页面依赖用户本机 Chrome 登录态，自动化测试通过 seam 覆盖，仍需手动复验。
 
 ## 最近变更记录
 
+- 2026-06-08：修复公开网页和得到 Chrome 导入失败；在 `main` 上恢复 `mode=chrome` 导入路径，公开网页优先抽取 `.prose` 等正文容器，得到 Chrome 标签页先按完整 query 匹配、再按 host/path 重试，DevTools 不可用时回退读取前台 Chrome 标签页并校验 host/path；真实 01MVP URL 导入成功，新增回归测试，`MVP-014` 进入 `Review`。
 - 2026-06-07：完成指定得到单篇 URL 的 URL-only 抽取验证；补齐 Scrapling fetchers 依赖，得到 URL 导入前接入专用清洗，目标 URL 直抓确认返回 SPA 空壳无正文，新增明确错误提示，123 个测试通过，Ruff、mypy 和前端构建通过。
 - 2026-06-07：完成公开网页 URL 导入；新增 Scrapling 抓取和正文候选抽取、`POST /api/import/url`、书架页 URL 导入表单，`MVP-013` 标记完成，121 个测试通过，Ruff、mypy、前端构建和浏览器验收通过。
 - 2026-06-07：完成阅读页正文展示；阅读页按段落和句子渲染结构化正文，句子节点可定位可点击，sticky 导航，正文排版落地，115 个测试通过。

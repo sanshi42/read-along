@@ -4,9 +4,10 @@ from pathlib import Path
 import pymupdf
 import pytest
 
+from read_along.browser import BrowserExtractionError, BrowserPageText
 from read_along.config import AppConfig
 from read_along.db import initialize_database
-from read_along.importers import UrlImportError, WebPageContent, import_pdf, import_url
+from read_along.importers import UrlImportError, WebPageContent, _extract_main_text, import_pdf, import_url
 from read_along.material_library import MaterialLibrary
 from read_along.models import MaterialDetail, SourceType
 from read_along.storage import StoragePaths
@@ -196,6 +197,37 @@ class TestImportPdf:
 
 
 class TestImportUrl:
+    def test_extract_main_text_prefers_document_prose_container(self) -> None:
+        """文档站页面应优先抽取正文容器，而不是包含工具按钮的整篇壳层。"""
+        from scrapling.parser import Adaptor
+
+        page = Adaptor(
+            """
+            <html>
+              <body>
+                <article>
+                  <button>Zen</button>
+                  <button>Copy Markdown</button>
+                  <h1>Skills</h1>
+                  <p>让 AI 记住你的工作习惯，不用每次都从头教它。</p>
+                  <div class="prose">
+                    <p>欢迎来到 01MVP 的 Skills 系列教程。</p>
+                    <p>Skill 是写给 AI 的工作说明书，可以省下你宝贵的时间。</p>
+                  </div>
+                </article>
+              </body>
+            </html>
+            """,
+            url="https://01mvp.com/docs/resources/skills",
+        )
+
+        text = _extract_main_text(page)
+
+        assert "欢迎来到 01MVP 的 Skills 系列教程。" in text
+        assert "Skill 是写给 AI 的工作说明书" in text
+        assert "Copy Markdown" not in text
+        assert "Zen" not in text
+
     def test_basic_import(
         self,
         tmp_path: Path,
@@ -256,10 +288,10 @@ class TestImportUrl:
     def test_rejects_unsupported_mode(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
 
-        with pytest.raises(UrlImportError, match="仅支持公开网页自动导入"):
+        with pytest.raises(UrlImportError, match="不支持的网页导入模式"):
             import_url(
                 url="https://example.com/article",
-                mode="chrome",
+                mode="unknown",
                 library=library,
             )
 
@@ -328,5 +360,104 @@ class TestImportUrl:
         with pytest.raises(UrlImportError, match="登录态或动态渲染"):
             import_url(
                 url=target_url,
+                library=library,
+            )
+
+    def test_chrome_import_retries_dedao_id_url_without_query(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """得到文章 URL 含 id 查询参数时，应能匹配已跳转后的同路径标签页。"""
+        library = _library(tmp_path)
+        seen_filters: list[str | None] = []
+
+        def fake_extract_page_text(
+            *,
+            url_contains: str | None = None,
+        ) -> BrowserPageText:
+            seen_filters.append(url_contains)
+            if url_contains == "www.dedao.cn/course/article?id=obyr":
+                raise BrowserExtractionError("没有 Chrome 标签页符合指定筛选条件。")
+            assert url_contains == "www.dedao.cn/course/article"
+            return BrowserPageText(
+                title="得到课程单篇",
+                url="https://www.dedao.cn/course/article?enid=obyr",
+                selector="main",
+                text="第一段正文解释核心概念。第二句继续说明。",
+            )
+
+        monkeypatch.setattr("read_along.importers.extract_page_text", fake_extract_page_text)
+
+        result = import_url(
+            url="https://www.dedao.cn/course/article?id=obyr",
+            mode="chrome",
+            library=library,
+        )
+
+        assert seen_filters == [
+            "www.dedao.cn/course/article?id=obyr",
+            "www.dedao.cn/course/article",
+        ]
+        assert result.primary_source.source_uri == "https://www.dedao.cn/course/article?enid=obyr"
+
+    def test_chrome_import_falls_back_to_front_chrome_tab(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """DevTools 端口不可用时，应尝试读取用户当前已登录的前台 Chrome 标签页。"""
+        library = _library(tmp_path)
+
+        def fail_extract_page_text(
+            *,
+            url_contains: str | None = None,
+        ) -> BrowserPageText:
+            raise BrowserExtractionError("无法连接 Chrome DevTools。")
+
+        def fake_extract_front_chrome_text() -> BrowserPageText:
+            return BrowserPageText(
+                title="得到课程单篇",
+                url="https://www.dedao.cn/course/article?id=obyr",
+                selector="article",
+                text="第一段正文解释核心概念。第二句继续说明。",
+            )
+
+        monkeypatch.setattr("read_along.importers.extract_page_text", fail_extract_page_text)
+        monkeypatch.setattr("read_along.importers.extract_front_chrome_text", fake_extract_front_chrome_text)
+
+        result = import_url(
+            url="https://www.dedao.cn/course/article?id=obyr",
+            mode="chrome",
+            library=library,
+        )
+
+        assert result.title == "得到课程单篇"
+        assert result.paragraphs[0].sentences[0].text == "第一段正文解释核心概念。"
+
+    def test_chrome_import_wraps_browser_errors(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Chrome DevTools 和前台标签页都失败时应作为网页导入错误返回。"""
+        library = _library(tmp_path)
+
+        def fail_extract_page_text(
+            *,
+            url_contains: str | None = None,
+        ) -> BrowserPageText:
+            raise BrowserExtractionError("无法连接 Chrome DevTools。")
+
+        def fail_extract_front_chrome_text() -> BrowserPageText:
+            raise BrowserExtractionError("无法读取 Chrome 前台标签页。")
+
+        monkeypatch.setattr("read_along.importers.extract_page_text", fail_extract_page_text)
+        monkeypatch.setattr("read_along.importers.extract_front_chrome_text", fail_extract_front_chrome_text)
+
+        with pytest.raises(UrlImportError, match="无法连接 Chrome DevTools"):
+            import_url(
+                url="https://www.dedao.cn/course/article",
+                mode="chrome",
                 library=library,
             )
