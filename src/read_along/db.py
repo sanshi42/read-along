@@ -6,7 +6,6 @@ from pathlib import Path
 
 from read_along.storage import StoragePaths
 
-
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS materials (
     id TEXT PRIMARY KEY,
@@ -83,13 +82,15 @@ CREATE TABLE IF NOT EXISTS import_jobs (
 
 
 def connect_database(database: Path) -> sqlite3.Connection:
+    """打开启用外键约束的 SQLite 连接。"""
     connection = sqlite3.connect(database)
     connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute('PRAGMA foreign_keys = ON')
     return connection
 
 
 def initialize_database(paths: StoragePaths) -> None:
+    """初始化本地 SQLite schema。"""
     paths.ensure_directories()
     with closing(connect_database(paths.database)) as connection:
         connection.executescript(SCHEMA)

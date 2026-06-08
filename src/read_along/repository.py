@@ -15,8 +15,7 @@ from read_along.models import (
     Sentence,
 )
 
-
-ModelT = TypeVar("ModelT", bound=BaseModel)
+ModelT = TypeVar('ModelT', bound=BaseModel)
 
 
 def _row_model(row: sqlite3.Row | None, model: type[ModelT]) -> ModelT | None:
@@ -36,6 +35,7 @@ class Repository:
         self.database = database
 
     def connect(self) -> sqlite3.Connection:
+        """打开 repository 使用的 SQLite 连接。"""
         return connect_database(self.database)
 
     def get_material(
@@ -43,8 +43,9 @@ class Repository:
         connection: sqlite3.Connection,
         material_id: str,
     ) -> Material | None:
+        """按 ID 查询阅读材料。"""
         row = connection.execute(
-            "SELECT * FROM materials WHERE id = ?",
+            'SELECT * FROM materials WHERE id = ?',
             (material_id,),
         ).fetchone()
         return _row_model(row, Material)
@@ -54,13 +55,15 @@ class Repository:
         connection: sqlite3.Connection,
         content_hash: str,
     ) -> Material | None:
+        """按结构化正文哈希查询阅读材料。"""
         row = connection.execute(
-            "SELECT * FROM materials WHERE content_hash = ?",
+            'SELECT * FROM materials WHERE content_hash = ?',
             (content_hash,),
         ).fetchone()
         return _row_model(row, Material)
 
     def list_materials(self, connection: sqlite3.Connection) -> list[Material]:
+        """按最近更新时间列出阅读材料。"""
         rows = connection.execute(
             """
             SELECT *
@@ -80,6 +83,7 @@ class Repository:
         created_at: str,
         updated_at: str,
     ) -> None:
+        """插入阅读材料元数据。"""
         connection.execute(
             """
             INSERT INTO materials (id, title, content_hash, created_at, updated_at)
@@ -95,8 +99,9 @@ class Repository:
         material_id: str,
         updated_at: str,
     ) -> None:
+        """更新阅读材料活动时间。"""
         connection.execute(
-            "UPDATE materials SET updated_at = ? WHERE id = ?",
+            'UPDATE materials SET updated_at = ? WHERE id = ?',
             (updated_at, material_id),
         )
 
@@ -107,6 +112,7 @@ class Repository:
         source_type: str,
         source_key: str,
     ) -> MaterialSource | None:
+        """按来源类型和来源键查询来源身份。"""
         row = connection.execute(
             """
             SELECT *
@@ -122,6 +128,7 @@ class Repository:
         connection: sqlite3.Connection,
         material_id: str,
     ) -> list[MaterialSource]:
+        """列出指定材料的全部来源身份。"""
         rows = connection.execute(
             """
             SELECT *
@@ -146,6 +153,7 @@ class Repository:
         is_primary: bool,
         created_at: str,
     ) -> None:
+        """插入阅读材料来源身份。"""
         connection.execute(
             """
             INSERT INTO material_sources (
@@ -181,6 +189,7 @@ class Repository:
         text: str,
         source_label: str | None,
     ) -> None:
+        """插入阅读材料段落。"""
         connection.execute(
             """
             INSERT INTO paragraphs (id, material_id, "index", text, source_label)
@@ -194,6 +203,7 @@ class Repository:
         connection: sqlite3.Connection,
         material_id: str,
     ) -> list[Paragraph]:
+        """按顺序列出指定材料的段落。"""
         rows = connection.execute(
             """
             SELECT *
@@ -216,6 +226,7 @@ class Repository:
         text: str,
         audio_status: str,
     ) -> None:
+        """插入阅读材料句子。"""
         connection.execute(
             """
             INSERT INTO sentences (
@@ -242,6 +253,7 @@ class Repository:
         connection: sqlite3.Connection,
         material_id: str,
     ) -> list[Sentence]:
+        """按顺序列出指定材料的句子。"""
         rows = connection.execute(
             """
             SELECT *
@@ -260,6 +272,7 @@ class Repository:
         material_id: str,
         sentence_id: str,
     ) -> bool:
+        """判断句子是否属于指定阅读材料。"""
         row = connection.execute(
             """
             SELECT 1
@@ -279,6 +292,7 @@ class Repository:
         playback_rate: float,
         updated_at: str,
     ) -> None:
+        """覆盖保存阅读进度。"""
         connection.execute(
             """
             INSERT INTO reading_progress (
@@ -300,8 +314,9 @@ class Repository:
         connection: sqlite3.Connection,
         material_id: str,
     ) -> ReadingProgress | None:
+        """读取指定材料的阅读进度。"""
         row = connection.execute(
-            "SELECT * FROM reading_progress WHERE material_id = ?",
+            'SELECT * FROM reading_progress WHERE material_id = ?',
             (material_id,),
         ).fetchone()
         return _row_model(row, ReadingProgress)
@@ -311,4 +326,5 @@ class Repository:
         connection: sqlite3.Connection,
         material_id: str,
     ) -> None:
-        connection.execute("DELETE FROM materials WHERE id = ?", (material_id,))
+        """删除阅读材料数据库记录。"""
+        connection.execute('DELETE FROM materials WHERE id = ?', (material_id,))

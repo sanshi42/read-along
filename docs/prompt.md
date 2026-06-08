@@ -63,10 +63,10 @@
 命令形态：
 
 ```bash
-uv run --no-editable read-along serve
+make dev
 ```
 
-运行 Python 项目命令时优先使用 `uv run --no-editable ...`。
+运行 Python 项目命令时优先使用 uv 默认 editable mode，例如 `uv run ...`；仅部署或打包场景考虑 `--no-editable`。
 
 ## 多 Agent 开发方式
 
@@ -86,7 +86,7 @@ uv run --no-editable read-along serve
 - Orchestrator Agent：选择下一个最小任务，维护 `task-spec.md`、`tasks/progress.md` 和 backlog 状态。
 - Backend Agent：实现 FastAPI、SQLite、导入、TTS、文件服务和后端测试。
 - Frontend Agent：实现 React 阅读器、播放器、状态持久化和前端测试。
-- QA Agent：补齐 `pytest`、`ruff`、`mypy`、前端构建/测试和手动验收脚本。
+- QA Agent：补齐 `pytest`、`ruff`、`pyrefly`、前端构建/测试和手动验收脚本。
 - Reviewer Agent：检查范围漂移、安全边界、测试缺口和文档同步。
 
 同一任务内可以由多个 Agent 协作，但必须有一个任务负责人保持范围一致，并在任务完成时统一更新 `tasks/progress.md`。
@@ -110,15 +110,15 @@ uv run --no-editable read-along serve
 
 ## 测试与质量门槛
 
-后续测试会加入 `ruff` 和 `mypy` 检测。每个代码任务都要尽量满足以下检查：
+后续测试会加入 `ruff` 和 `pyrefly` 检测。每个代码任务都要尽量满足以下检查：
 
 ```bash
-uv run --no-editable pytest
-uv run --no-editable ruff check .
-uv run --no-editable mypy src tests
+uv run pytest
+uv run ruff check .
+uv run pyrefly check
 ```
 
-如果 `ruff` 或 `mypy` 尚未加入项目依赖或配置，负责相关基线任务的 Agent 应更新 `pyproject.toml`，把它们加入 dev 依赖并提供合理的最小配置。不要只在口头说明里假设它们存在。
+如果 `ruff` 或 `pyrefly` 尚未加入项目依赖或配置，负责相关基线任务的 Agent 应更新 `pyproject.toml`，把它们加入 dev 依赖并提供合理的最小配置。不要只在口头说明里假设它们存在。
 
 后续如果前端已经创建，还应根据实际脚本运行：
 
@@ -161,7 +161,7 @@ npm test
 
 - 当前 `task-spec.md` 的 acceptance criteria 已满足，或未满足项已明确写成阻塞/后续任务。
 - 有必要的自动测试或明确的不可自动测试说明。
-- 已运行适用的质量检查，至少包括 `pytest`；如果已配置，则包括 `ruff` 和 `mypy`。
+- 已运行适用的质量检查，至少包括 `pytest`；如果已配置，则包括 `ruff` 和 `pyrefly`。
 - 没有扩大到当前任务非目标。
 - `tasks/progress.md` 已更新。
 - 最终说明列出改动文件、验证命令和剩余风险。

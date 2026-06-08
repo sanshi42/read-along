@@ -18,27 +18,34 @@ Read Along 是一个 macOS 优先的个人本地 Web App。它把单篇网页或
 
 ```bash
 uv venv
-uv sync --no-editable
-uv run --no-editable read-along serve
+make setup
+make dev
 ```
 
 服务默认监听 `http://127.0.0.1:8765`，健康检查位于 `GET /api/health`。
 
-前端开发服务器需要另开终端启动：
+前端默认监听 `http://127.0.0.1:5173`，开发服务器会将 `/api` 请求代理到本地后端。`make dev` 会在同一终端启动后端和前端；后端源码变更后重启命令，前端由 Vite 热更新。
+
+也可以分别启动：
 
 ```bash
-npm install --prefix web
+uv run read-along serve
 npm run dev --prefix web
 ```
 
-前端默认监听 `http://127.0.0.1:5173`，开发服务器会将 `/api` 请求代理到本地后端。
+uv 本地开发默认使用 editable mode，部署或打包场景才需要考虑 `--no-editable`。
 
 ## 质量检查
 
 ```bash
-uv run --no-editable pytest
-uv run --no-editable ruff check .
-uv run --no-editable mypy src tests
+make format
+make check
+```
+
+`make check` 会运行 Ruff、Pyrefly、pytest 和前端生产构建。首次初始化时 `make setup` 会安装 pre-commit hook；之后 `git commit` 会自动执行 Ruff 修复、格式化和 Pyrefly 检查。也可以单独运行：
+
+```bash
+uv run pre-commit install
 npm run build --prefix web
 ```
 

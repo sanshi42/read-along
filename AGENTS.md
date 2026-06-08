@@ -78,7 +78,7 @@ tasks/002-sqlite-storage/task-spec.md
 - 配置环境变量使用 `READ_ALONG_` 前缀。
 - 得到专用逻辑放在 `src/read_along/sources/dedao.py`，通用层保持来源无关。
 - 后端默认监听 `127.0.0.1:8765`。
-- 运行 Python 项目命令时优先使用 `uv run --no-editable ...`。
+- 运行 Python 项目命令时优先使用 uv 默认 editable mode，例如 `uv run ...`；仅部署或打包场景考虑 `--no-editable`。
 
 ## 验收原则
 

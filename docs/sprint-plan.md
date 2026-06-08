@@ -41,7 +41,7 @@
 ### 范围
 
 - 确认 Python 依赖管理仍使用 `uv`。
-- 确认后端命令形态：`uv run --no-editable read-along serve`。
+- 确认开发命令形态：`make dev`。
 - 确认前端目录：`web`。
 - 确认数据目录默认值：`~/.local/share/read-along/`。
 - 确认本地服务默认绑定 `127.0.0.1:8765`。
@@ -62,7 +62,7 @@
 ### 风险
 
 - 前端工具链需要额外 Node 环境。
-- 后端开发命令统一使用 `uv run --no-editable`。
+- uv 本地开发默认使用 editable mode，部署或打包场景才考虑 `--no-editable`。
 
 ## Sprint 1：本地材料库与阅读基础
 

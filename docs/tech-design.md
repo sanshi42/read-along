@@ -49,13 +49,13 @@ web/
     player/
 ```
 
-新增命令：
+开发命令：
 
 ```bash
-uv run --no-editable read-along serve
+make dev
 ```
 
-后端默认监听 `127.0.0.1:8765`。开发时前端用 Vite dev server；生产/本地使用时后端可静态服务 `web/dist`。
+`make dev` 在同一终端启动后端和前端。后端默认监听 `127.0.0.1:8765`，前端使用 Vite dev server。uv 本地开发默认使用 editable mode；部署或打包场景才考虑 `--no-editable`。生产/本地使用时后端可静态服务 `web/dist`。
 
 ## 本地数据目录
 
