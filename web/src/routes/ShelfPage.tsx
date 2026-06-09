@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { importUrl, listMaterials, type MaterialSummary } from "../api";
+import { importUrl, listMaterials, type MaterialSummary, type UrlImportMode } from "../api";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   month: "short",
@@ -16,6 +16,7 @@ export function ShelfPage() {
   const [materials, setMaterials] = useState<MaterialSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [url, setUrl] = useState("");
+  const [importMode, setImportMode] = useState<UrlImportMode>("auto");
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -51,7 +52,7 @@ export function ShelfPage() {
     setImportError(null);
     setImportMessage(null);
     try {
-      const imported = await importUrl(nextUrl);
+      const imported = await importUrl(nextUrl, importMode);
       setMaterials((current) => {
         if (!current) {
           return [imported];
@@ -84,9 +85,36 @@ export function ShelfPage() {
       <section className="import-band" aria-labelledby="url-import-heading">
         <div>
           <p className="eyebrow">导入</p>
-          <h2 id="url-import-heading">公开网页</h2>
+          <h2 id="url-import-heading">网页导入</h2>
         </div>
         <form className="url-import-form" onSubmit={handleUrlImport}>
+          <fieldset className="import-mode-control">
+            <legend>导入方式</legend>
+            <div className="import-mode-options">
+              <label className="import-mode-option">
+                <input
+                  type="radio"
+                  name="import-mode"
+                  value="auto"
+                  checked={importMode === "auto"}
+                  disabled={importing}
+                  onChange={() => setImportMode("auto")}
+                />
+                <span>公开网页</span>
+              </label>
+              <label className="import-mode-option">
+                <input
+                  type="radio"
+                  name="import-mode"
+                  value="chrome"
+                  checked={importMode === "chrome"}
+                  disabled={importing}
+                  onChange={() => setImportMode("chrome")}
+                />
+                <span>已登录 Chrome</span>
+              </label>
+            </div>
+          </fieldset>
           <label htmlFor="url-input">网页 URL</label>
           <div className="url-import-row">
             <input
@@ -99,7 +127,7 @@ export function ShelfPage() {
               onChange={(event) => setUrl(event.target.value)}
             />
             <button type="submit" disabled={importing}>
-              {importing ? "导入中" : "导入"}
+              {importing ? "导入中" : importMode === "chrome" ? "从 Chrome 导入" : "导入"}
             </button>
           </div>
           {importError ? (
@@ -147,7 +175,7 @@ export function ShelfPage() {
             </div>
             <p className="eyebrow">书架还是空的</p>
             <h2>先导入一篇值得阅读的材料</h2>
-            <p>在上方输入公开网页 URL，或通过后端 PDF 导入接口添加文本型 PDF。</p>
+            <p>在上方输入网页 URL，公开页面直接导入；需要登录权限的页面可选择已登录 Chrome。</p>
           </section>
         ) : null}
 

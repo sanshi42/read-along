@@ -1,10 +1,10 @@
 # Project Progress
 
-最后更新：2026-06-08
+最后更新：2026-06-09
 
 ## 当前状态
 
-Sprint 2 继续推进。开发工具链基线已切换为 uv 默认 editable mode、Pyrefly、Ruff 和 pre-commit local hooks；公开网页 URL 导入已在真实 01MVP 文档页复验通过，得到单篇 Chrome 导入路径等待用户在已登录 Chrome 中手动复验目标页面。
+Sprint 2 继续推进。真实本地环境 URL 导入回归已整体修复：书架页恢复“公开网页 / 已登录 Chrome”两种导入方式，Chrome 模式可按目标 URL 选择标签页，旧库 schema 可迁移并保存新材料；公开网页和得到单篇 URL 均已完成验证。
 
 ## 已完成
 
@@ -30,24 +30,26 @@ Sprint 2 继续推进。开发工具链基线已切换为 uv 默认 editable mod
 | 017 | 得到单篇 URL 抽取目标验证 | Done | `scrapling[fetchers]` 依赖、得到 URL 清洗接入、目标 URL 直抓边界确认、123 个测试 |
 | 018 | 修复公开网页和得到 Chrome 导入失败 | Done | 文档正文容器优先抽取、Chrome 标签页 query/path 重试、前台 Chrome fallback、目标公开 URL 复验、127 个测试 |
 | 019 | 开发工具链基线 | Done | `Makefile`、pre-commit local hooks、Pyrefly 迁移、Ruff 规则、uv editable mode 开发命令 |
+| 020 | 修复真实本地环境 URL 导入回归 | Done | 导入方式 UI 恢复、Chrome 目标标签页选择、旧库 schema 迁移与残留外键修复、公开网页和得到单篇 URL 验证、131 个测试 |
 
 ## 当前任务
 
-无。`019-dev-tooling-baseline` 已完成。
+无。`020-url-import-regression` 已完成。
 
 ## 下一步
 
 继续 Sprint 2：网页导入与得到单篇支持：
 
-1. 用户在本机用已登录 Chrome 复验 `https://www.dedao.cn/course/article?id=obyrmnqGdwxkXWMa0VelBz2D5ZO8aN` 的 Chrome 模式导入；通过后将 `MVP-014` 标记为 `Done`。
+1. 用户重启本地后端后，在前端用已登录 Chrome 复验 `https://www.dedao.cn/course/article?id=obyrmnqGdwxkXWMa0VelBz2D5ZO8aN` 的 Chrome 模式导入；通过后将 `MVP-014` 标记为 `Done`。
 2. `MVP-015` 重复导入：重复导入相同来源或相同结构化正文时，不生成重复材料，并给出清晰反馈。
 
 ## 阻塞项
 
-无代码阻塞。真实已登录得到页面依赖用户本机 Chrome 登录态，自动化测试通过 seam 覆盖，仍需手动复验。
+无代码阻塞。若需要在当前运行中的前端再次验证 Chrome 标签页选择修复，仍建议重启本地后端以加载最新代码。
 
 ## 最近变更记录
 
+- 2026-06-09：整体修复真实本地环境 URL 导入回归；书架页恢复公开网页/已登录 Chrome 两种导入方式，Chrome fallback 可按目标 URL 搜索所有普通标签页；新增旧 `materials` 单表迁移并修复 `material_sources` 残留旧外键；公开网页在临时库、真实默认库和当前 API 导入成功，得到单篇 Chrome 模式在临时库完整导入成功，in-app browser 验证 UI，`make check` 全量通过。
 - 2026-06-08：完成开发工具链基线；开发命令改为 uv 默认 editable mode，新增 `Makefile` 一键启动和检查入口，新增 pre-commit local hooks，使用 `pyrefly init` 从 mypy 自动迁移到 Pyrefly 并移除 mypy，配置 Ruff isort、Google docstring 和 single quote，`make dev` 冒烟验证通过，`make check` 全量通过。
 - 2026-06-08：修复公开网页和得到 Chrome 导入失败；在 `main` 上恢复 `mode=chrome` 导入路径，公开网页优先抽取 `.prose` 等正文容器，得到 Chrome 标签页先按完整 query 匹配、再按 host/path 重试，DevTools 不可用时回退读取前台 Chrome 标签页并校验 host/path；真实 01MVP URL 导入成功，新增回归测试，`MVP-014` 进入 `Review`。
 - 2026-06-07：完成指定得到单篇 URL 的 URL-only 抽取验证；补齐 Scrapling fetchers 依赖，得到 URL 导入前接入专用清洗，目标 URL 直抓确认返回 SPA 空壳无正文，新增明确错误提示，123 个测试通过，Ruff、mypy 和前端构建通过。

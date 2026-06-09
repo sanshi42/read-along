@@ -1,4 +1,5 @@
 import json
+import subprocess
 import urllib.error
 
 import pytest
@@ -10,6 +11,7 @@ from read_along.browser import (
     BrowserTab,
     clean_browser_text,
     devtools_origin,
+    extract_chrome_text_by_url_filters,
     fetch_tabs,
     page_text_from_payload,
     select_tab,
@@ -88,3 +90,44 @@ def test_page_text_from_payload_cleans_without_saving_source() -> None:
     assert page.url == 'https://www.dedao.cn/course/article'
     assert page.selector == 'main'
     assert page.text == '第一段正文。\n\n第二段正文。'
+
+
+def test_extract_chrome_text_by_url_filters_passes_filters_to_jxa(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_args: list[str] = []
+
+    def fake_run(
+        args: list[str],
+        *,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        timeout: float,
+    ) -> subprocess.CompletedProcess[str]:
+        captured_args.extend(args)
+        payload = json.dumps(
+            {
+                'title': '得到课程单篇',
+                'url': 'https://www.dedao.cn/course/article?id=obyr',
+                'selector': 'article',
+                'text': '正文第一句。正文第二句。',
+            },
+            ensure_ascii=False,
+        )
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=payload, stderr='')
+
+    monkeypatch.setattr(browser.subprocess, 'run', fake_run)
+
+    page = extract_chrome_text_by_url_filters(
+        ['www.dedao.cn/course/article?id=obyr', 'www.dedao.cn/course/article'],
+    )
+
+    assert captured_args[:4] == ['osascript', '-l', 'JavaScript', '-e']
+    assert json.loads(captured_args[-1]) == [
+        'www.dedao.cn/course/article?id=obyr',
+        'www.dedao.cn/course/article',
+    ]
+    assert page.title == '得到课程单篇'
+    assert page.url == 'https://www.dedao.cn/course/article?id=obyr'
+    assert page.text == '正文第一句。正文第二句。'

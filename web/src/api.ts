@@ -1,4 +1,5 @@
 export type SourceType = "url" | "pdf";
+export type UrlImportMode = "auto" | "chrome";
 
 export interface MaterialSource {
   id: string;
@@ -57,12 +58,12 @@ export function getMaterial(materialId: string): Promise<MaterialDetail> {
   return request<MaterialDetail>(`/api/materials/${encodeURIComponent(materialId)}`);
 }
 
-export function importUrl(url: string): Promise<MaterialDetail> {
+export function importUrl(url: string, mode: UrlImportMode = "auto"): Promise<MaterialDetail> {
   return request<MaterialDetail>("/api/import/url", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ url, mode: "auto" }),
+    body: JSON.stringify({ url, mode }),
   });
 }

@@ -152,9 +152,58 @@ h1 {
   font-weight: 700;
 }
 
+.import-mode-control {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.import-mode-control legend {
+  padding: 0;
+  color: #625c52;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.import-mode-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.import-mode-option {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  gap: 7px;
+  padding: 7px 11px;
+  border: 1px solid rgba(75, 69, 59, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+}
+
+.import-mode-option:has(input:checked) {
+  border-color: rgba(109, 74, 40, 0.58);
+  color: #5f3e20;
+  background: rgba(255, 250, 240, 0.88);
+}
+
+.import-mode-option:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.import-mode-option input {
+  margin: 0;
+  accent-color: #6d4a28;
+}
+
 .url-import-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 96px;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, max-content);
   gap: 10px;
 }
 

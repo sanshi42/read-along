@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from read_along.browser import BrowserExtractionError, BrowserPageText, extract_front_chrome_text, extract_page_text
+from read_along.browser import (
+    BrowserExtractionError,
+    BrowserPageText,
+    extract_chrome_text_by_url_filters,
+    extract_front_chrome_text,
+    extract_page_text,
+)
 from read_along.extractors import pdf_page_texts, structure_text
 from read_along.material_library import MaterialLibrary
 from read_along.models import (
@@ -196,11 +202,17 @@ def _chrome_tab_filters(url: str) -> list[str]:
 
 def _extract_chrome_page(url: str) -> BrowserPageText:
     errors: list[str] = []
-    for url_filter in _chrome_tab_filters(url):
+    url_filters = _chrome_tab_filters(url)
+    for url_filter in url_filters:
         try:
             return extract_page_text(url_contains=url_filter)
         except BrowserExtractionError as exc:
             errors.append(str(exc))
+
+    try:
+        return extract_chrome_text_by_url_filters(url_filters)
+    except BrowserExtractionError as exc:
+        errors.append(str(exc))
 
     try:
         page = extract_front_chrome_text()
@@ -209,7 +221,8 @@ def _extract_chrome_page(url: str) -> BrowserPageText:
         raise UrlImportError(_chrome_error_message(errors)) from exc
 
     if not _chrome_page_matches(url, page.url):
-        raise UrlImportError(f'Chrome 前台标签页不是请求的网页。当前页面：{page.url or "未知"}。请切到目标页面后重试。')
+        errors.append(f'Chrome 当前活动标签页不是请求的网页（当前页面：{page.url or "未知"}）。')
+        raise UrlImportError(_chrome_error_message(errors))
     return page
 
 

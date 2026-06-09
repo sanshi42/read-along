@@ -91,6 +91,62 @@ function run(argv) {
 }
 """.strip()
 
+CHROME_JXA_URL_FILTER_SCRIPT = """
+function run(argv) {
+  const jsCode = argv[0];
+  const filters = JSON.parse(argv[1] || '[]');
+  const chrome = Application('Google Chrome');
+  if (chrome.windows.length === 0) {
+    throw new Error('没有已打开的 Chrome 窗口。');
+  }
+
+  function valueOf(property) {
+    try {
+      return property();
+    } catch (error) {
+      return property;
+    }
+  }
+
+  const availableTabs = [];
+  for (let windowIndex = 0; windowIndex < chrome.windows.length; windowIndex += 1) {
+    const tabs = chrome.windows[windowIndex].tabs;
+    for (let tabIndex = 0; tabIndex < tabs.length; tabIndex += 1) {
+      const tab = tabs[tabIndex];
+      const url = String(valueOf(tab.url) || '');
+      const title = String(valueOf(tab.title) || '');
+      if (!url || url.startsWith('chrome://') || url.startsWith('devtools://')) {
+        continue;
+      }
+      availableTabs.push({ title, url, tab });
+    }
+  }
+
+  for (const filter of filters) {
+    const candidates = availableTabs.filter((item) => item.url.includes(filter));
+    if (candidates.length === 1) {
+      return candidates[0].tab.execute({ javascript: jsCode });
+    }
+    if (candidates.length > 1) {
+      const matched = candidates
+        .slice(0, 10)
+        .map((item) => `- ${item.title} | ${item.url}`)
+        .join('\\n');
+      throw new Error(`有多个 Chrome 标签页符合目标 URL。请关闭重复目标页后重试。\\n匹配的标签页：\\n${matched}`);
+    }
+  }
+
+  const available = availableTabs
+    .slice(0, 10)
+    .map((item) => `- ${item.title} | ${item.url}`)
+    .join('\\n') || '- 没有页面标签页';
+  throw new Error(
+    '没有 Chrome 标签页符合目标 URL。请先在 Chrome 打开目标页面，再回到 Read Along 点击导入。' +
+    `\\n可用标签页：\\n${available}`
+  );
+}
+""".strip()
+
 
 @dataclass(frozen=True)
 class BrowserTab:
@@ -233,9 +289,41 @@ def extract_page_text(
 
 def extract_front_chrome_text(timeout: float = 10.0) -> BrowserPageText:
     """通过 AppleScript 读取 Chrome 前台标签页正文。"""
+    return _extract_chrome_text_with_jxa(
+        script=CHROME_JXA_SCRIPT,
+        args=[EXTRACT_PAGE_SCRIPT],
+        timeout=timeout,
+        action='读取 Chrome 前台标签页',
+    )
+
+
+def extract_chrome_text_by_url_filters(
+    url_filters: list[str],
+    timeout: float = 10.0,
+) -> BrowserPageText:
+    """通过 AppleScript 在所有 Chrome 标签页中查找匹配 URL 的页面正文。"""
+    filters = [item for item in url_filters if item]
+    if not filters:
+        raise BrowserExtractionError('缺少目标 URL 筛选条件。')
+
+    return _extract_chrome_text_with_jxa(
+        script=CHROME_JXA_URL_FILTER_SCRIPT,
+        args=[EXTRACT_PAGE_SCRIPT, json.dumps(filters, ensure_ascii=False)],
+        timeout=timeout,
+        action='查找 Chrome 目标标签页',
+    )
+
+
+def _extract_chrome_text_with_jxa(
+    *,
+    script: str,
+    args: list[str],
+    timeout: float,
+    action: str,
+) -> BrowserPageText:
     try:
         completed = subprocess.run(
-            ['osascript', '-l', 'JavaScript', '-e', CHROME_JXA_SCRIPT, EXTRACT_PAGE_SCRIPT],
+            ['osascript', '-l', 'JavaScript', '-e', script, *args],
             check=True,
             capture_output=True,
             text=True,
@@ -244,12 +332,12 @@ def extract_front_chrome_text(timeout: float = 10.0) -> BrowserPageText:
     except FileNotFoundError as exc:
         raise BrowserExtractionError('当前系统无法使用 osascript。') from exc
     except subprocess.TimeoutExpired as exc:
-        raise BrowserExtractionError('读取 Chrome 前台标签页超时。') from exc
+        raise BrowserExtractionError(f'{action}超时。') from exc
     except subprocess.CalledProcessError as exc:
         message = (exc.stderr or exc.stdout or '').strip()
         if 'not allowed' in message.lower() or 'javascript' in message.lower():
             message += '\n请启用 Chrome 的“查看 > 开发者 > 允许来自 Apple 事件的 JavaScript”，然后重新运行命令。'
-        raise BrowserExtractionError(f'无法读取 Chrome 前台标签页：{message}') from exc
+        raise BrowserExtractionError(f'无法{action}：{message}') from exc
 
     return page_text_from_payload(completed.stdout.strip())
 
