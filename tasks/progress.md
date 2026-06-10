@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-Sprint 2 继续推进。真实本地环境 URL 导入回归已整体修复：书架页恢复“公开网页 / 已登录 Chrome”两种导入方式，Chrome 模式可按目标 URL 选择标签页，旧库 schema 可迁移并保存新材料；公开网页和得到单篇 URL 均已完成验证。
+SQLModel 数据库架构设计已完成。技术方案已明确 SQLModel/Alembic 职责、现有数据库无损接管、启动迁移、备份失败策略和五步实施拆分；下一步先建立可验证的 SQLModel/Alembic baseline，不切换生产运行路径。
 
 ## 已完成
 
@@ -31,17 +31,17 @@ Sprint 2 继续推进。真实本地环境 URL 导入回归已整体修复：书
 | 018 | 修复公开网页和得到 Chrome 导入失败 | Done | 文档正文容器优先抽取、Chrome 标签页 query/path 重试、前台 Chrome fallback、目标公开 URL 复验、127 个测试 |
 | 019 | 开发工具链基线 | Done | `Makefile`、pre-commit local hooks、Pyrefly 迁移、Ruff 规则、uv editable mode 开发命令 |
 | 020 | 修复真实本地环境 URL 导入回归 | Done | 导入方式 UI 恢复、Chrome 目标标签页选择、旧库 schema 迁移与残留外键修复、公开网页和得到单篇 URL 验证、131 个测试 |
+| 023 | 设计 SQLModel 数据库架构与迁移方案 | Done | SQLModel/Alembic 职责、已知 schema 指纹、无损接管、启动迁移、备份策略和五步实施拆分 |
 
 ## 当前任务
 
-`023-sqlmodel-database-architecture`：设计 SQLModel 数据库架构、Alembic schema 演进和现有本地数据库无损接管方案。
+无。`023-sqlmodel-database-architecture` 已完成。
 
 ## 下一步
 
-继续 Sprint 2：网页导入与得到单篇支持：
-
-1. 用户重启本地后端后，在前端用已登录 Chrome 复验 `https://www.dedao.cn/course/article?id=obyrmnqGdwxkXWMa0VelBz2D5ZO8aN` 的 Chrome 模式导入；通过后将 `MVP-014` 标记为 `Done`。
-2. `MVP-015` 重复导入：重复导入相同来源或相同结构化正文时，不生成重复材料，并给出清晰反馈。
+1. `024-sqlmodel-alembic-baseline`：添加 SQLModel/Alembic 依赖、`UTCDateTime`、SQLModel 表模型和 baseline revision，验证空数据库真实 schema 与 metadata 一致；不切换生产启动或 Repository。
+2. 后续依次实现历史 schema 诊断、历史数据库接管与备份、启动迁移切换、SQLModel Repository 与事务切换。
+3. 数据库重构后继续 Sprint 2：用已登录 Chrome 复验目标得到单篇 URL，通过后将 `MVP-014` 标记为 `Done`，再补齐 `MVP-015` 的清晰重复导入反馈。
 
 ## 阻塞项
 
@@ -49,6 +49,7 @@ Sprint 2 继续推进。真实本地环境 URL 导入回归已整体修复：书
 
 ## 最近变更记录
 
+- 2026-06-10：完成 SQLModel 数据库架构设计；补齐已知 schema 状态、五步实施拆分和下一最小任务，修正技术方案中“不引入 SQLAlchemy”的旧取舍，并删除已过时的起始 prompt。
 - 2026-06-09：开始设计 SQLModel 数据库架构；确认采用 SQLModel 描述运行时表模型、Alembic 管理 schema 演进，并要求无损接管全部现有本地数据库和已知旧 schema。
 - 2026-06-09：确认应用启动时自动执行 Alembic 迁移；存在待执行迁移时先备份 SQLite 文件，迁移失败拒绝启动，新数据库同样通过 Alembic 创建。
 - 2026-06-09：确认 SQLModel 数据库表模型与领域/API DTO 分离；Repository 负责转换，API 和材料库外部调用方不直接操作数据库实体。
@@ -62,7 +63,7 @@ Sprint 2 继续推进。真实本地环境 URL 导入回归已整体修复：书
 - 2026-06-10：确认删除级联由 SQLite 外键执行，ORM Relationship 使用 `passive_deletes=True`，并通过 Engine 连接事件确保每个连接启用外键约束。
 - 2026-06-10：确认材料库写操作保留 `BEGIN IMMEDIATE`，SQLite 启用 WAL 并设置 5 秒 `busy_timeout`；耗时准备工作尽量移到写锁前，最终文件重命名继续与事务提交协调。
 - 2026-06-10：确认迁移备份使用 SQLite backup API，仅在存在待执行 migration 时创建；成功迁移前备份保留最近 3 个，失败迁移备份永久保留，schema 迁移不备份源文件和音频。
-- 2026-06-10：确认桥接迁移严格识别已知历史 schema；未知或损坏状态生成备份和具体诊断后拒绝迁移与启动，不进行猜测性修复或静默丢弃数据。
+- 2026-06-10：确认历史接管编排器严格识别已知历史 schema；未知或损坏状态生成备份和具体诊断后拒绝迁移与启动，不进行猜测性修复或静默丢弃数据。
 - 2026-06-10：确认使用启动迁移编排器接管历史库并标记 SQLModel baseline；Alembic revision 链保持干净，只负责 baseline 及后续正常 schema 演进。
 - 2026-06-10：确认业务运行时代码禁止裸 SQL；历史接管、Alembic、SQLite PRAGMA、`BEGIN IMMEDIATE` 和必要 schema 校验可在数据库基础设施中受控使用。
 - 2026-06-10：确认 `import_jobs` 仅纳入 SQLModel baseline schema 和历史数据无损迁移；本次重构不新增导入任务业务 Repository 或 API。

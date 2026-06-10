@@ -43,7 +43,7 @@
 - SQLModel 表模型只声明最小 Relationship，不建立完整对象图，也不通过 relationship cascade 保存整篇材料。
 - 数据库继续强制全部关键结构不变量，包括唯一约束、部分唯一索引、复合外键、级联删除和 `CHECK` 约束。
 - SQLModel 无法可靠自动生成的约束必须在 Alembic revision 中显式定义，并通过真实 SQLite schema 测试验证。
-- 时间字段迁移为带 UTC 时区语义的 `datetime`；API 保持 ISO 8601 表现，桥接迁移严格解析现有时间文本。
+- 时间字段迁移为带 UTC 时区语义的 `datetime`；API 保持 ISO 8601 表现，历史接管编排器严格解析现有时间文本。
 - SQLite 时间字段统一使用 SQLAlchemy `TypeDecorator` 类型 `UTCDateTime`，拒绝无时区值并保证读回带 UTC 时区。
 - 保留现有字符串稳定 ID 和材料库生成权，不引入自增整数、UUID 或隐藏代理主键。
 - 枚举字段使用 Python `StrEnum` 和 SQLite 字符串列加显式 `CHECK`，不使用 SQLAlchemy 原生 `Enum` 类型。
@@ -51,8 +51,8 @@
 - 材料库写操作保留 `BEGIN IMMEDIATE`；SQLite 启用 WAL，并设置 5 秒 `busy_timeout`。
 - 哈希计算和临时文件复制尽量在写锁前完成，最终文件重命名继续与数据库提交协调。
 - Alembic 应成为唯一 schema 创建和演进机制。
-- 需要提供桥接迁移，接管最早期单表 schema、当前六表 schema，以及已知的半迁移状态。
-- 桥接迁移使用明确 schema 指纹识别已知历史状态；未知或损坏状态生成备份和诊断后停止，不做猜测性修复。
+- 需要提供历史接管编排器，接管来源字段内嵌在 `materials` 的早期五表 schema、当前六表 schema，以及已知的半迁移状态。
+- 历史接管编排器使用明确 schema 指纹识别已知历史状态；未知或损坏状态生成备份和诊断后停止，不做猜测性修复。
 - 使用启动迁移编排器接管历史库并标记 baseline；Alembic revision 链只负责 baseline 及后续正常 schema 演进。
 - 业务运行时代码禁止裸 SQL；仅数据库基础设施和迁移允许受控使用，并要求集中、参数化、说明原因和测试覆盖。
 - `import_jobs` 仅纳入 SQLModel schema 和无损迁移，不在本次重构中新增业务 Repository 或 API。
@@ -94,4 +94,11 @@
 
 # Completion notes
 
-进行中。
+已完成。
+
+- 在 `docs/tech-design.md` 中明确 SQLModel 表模型、领域/API DTO、Repository、Session、材料库 Module 和 Alembic 的职责边界。
+- 明确数据库不变量、UTC 时间、枚举、稳定 ID、最小 Relationship、SQLite 外键级联、`BEGIN IMMEDIATE`、WAL 和锁等待策略。
+- 明确历史接管编排器、已知 schema 状态、SQLite backup API、失败拒绝启动和 Alembic revision 链边界。
+- 将后续实现拆成五个可独立验收的小任务，推荐先建立 SQLModel 与 Alembic baseline，暂不切换生产运行路径。
+- 新增两条 ADR，记录无损接管现有本地数据库和应用启动时自动迁移的决策。
+- 修正 `docs/tech-design.md` 中“不引入 SQLAlchemy”的旧技术取舍，并删除已过时的 `docs/prompt.md`。

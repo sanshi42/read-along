@@ -147,7 +147,7 @@ READ_ALONG_HOME=/path/to/data
 
 - 数据库表模型使用 `datetime` 表示 `created_at`、`updated_at` 等时间字段，不再让领域代码传递或解析 ISO 文本。
 - 应用内时间统一为带 UTC 时区的 `datetime`；API 继续序列化为 ISO 8601，不改变接口表现。
-- 桥接迁移必须严格解析现有 ISO 时间文本并保留时间点；遇到无效历史时间时迁移失败，不静默替换。
+- 历史接管编排器必须严格解析现有 ISO 时间文本并保留时间点；遇到无效历史时间时迁移失败，不静默替换。
 - SQLite 不原生保存时区，不能只依赖 `DateTime(timezone=True)` 保证读回 UTC 时区。
 - 项目提供 SQLAlchemy `TypeDecorator` 类型 `UTCDateTime`：拒绝无时区 `datetime`，写入前转换为 UTC，读出后恢复 `timezone.utc`。
 - SQLModel 时间字段统一使用 `UTCDateTime`，并通过跨 Session 重读、排序和旧 ISO 时间迁移测试验证。
@@ -165,7 +165,7 @@ READ_ALONG_HOME=/path/to/data
 - Python 领域模型和数据库实体使用现有 `StrEnum` 表达来源类型、音频状态和导入任务状态。
 - SQLite 使用字符串列和显式 `CHECK` 约束，不使用 SQLAlchemy 原生 `Enum` 类型。
 - 新增或删除允许值必须通过 Alembic revision 修改对应 `CHECK` 约束，不能仅修改 Python 枚举。
-- 桥接迁移保留当前字符串值，并在迁移前验证所有历史值都属于允许集合。
+- 历史接管编排器保留当前字符串值，并在迁移前验证所有历史值都属于允许集合。
 
 ### 导入任务表范围
 
@@ -178,9 +178,9 @@ READ_ALONG_HOME=/path/to/data
 
 采用 SQLModel 和 Alembic 时必须无损保留现有本地数据库，不允许通过清空并重建数据库完成切换。
 
-- 首条桥接迁移负责识别并接管最早期单表 schema、当前六表 schema，以及已知的半迁移状态。
+- 历史接管编排器负责识别并接管来源字段仍内嵌在 `materials` 的早期 schema、当前六表 schema，以及已知的半迁移状态。
 - 每个已知历史 schema 使用明确指纹识别，指纹包含表、列、索引、外键和 Alembic revision；空数据库按全新数据库处理。
-- 桥接迁移只处理明确支持的历史状态，不进行猜测性修复。
+- 历史接管编排器只处理明确支持的历史状态，不进行猜测性修复。
 - 遇到未知列组合、缺失必要表、非法枚举值、无效时间或悬空外键时，创建备份、输出具体诊断并拒绝迁移和启动。
 - 提供独立数据库诊断命令，但启动流程不得自动删除、忽略或替换异常数据。
 - 启动迁移编排器负责历史库接管：识别已知 schema、迁移为 SQLModel baseline schema、校验数据与约束，然后写入 baseline Alembic revision。
@@ -196,6 +196,19 @@ READ_ALONG_HOME=/path/to/data
 - Alembic 接管成功后，删除 `db.py` 中现有的手写 schema 创建、旧表复制和半迁移修复逻辑。
 - 后续 schema 变化只通过新的 Alembic revision 进行，不再增加启动时条件修复分支。
 
+已知 schema 状态及处理方式：
+
+| 状态 | 识别要点 | 处理方式 |
+| --- | --- | --- |
+| 空数据库 | 不存在业务表和 `alembic_version` | 直接执行 `alembic upgrade head`，不创建备份。 |
+| 早期五表 schema | 存在 `materials`、`paragraphs`、`sentences`、`reading_progress`、`import_jobs`；`materials` 仍包含来源和状态字段；不存在 `material_sources` 和 `alembic_version` | 严格校验全部表、索引、外键和数据后，转换为 baseline schema 并写入 baseline revision。 |
+| 当前六表 schema | 存在 `material_sources`；`materials` 已移除早期来源和状态字段；不存在 `alembic_version` | 严格校验 schema 和数据后直接写入 baseline revision，不重写业务数据。 |
+| 已知半迁移 schema | 主体已是当前六表 schema，但 `material_sources.material_id` 外键错误引用 `materials_legacy` | 重建 `material_sources`、校验数据与约束后写入 baseline revision。 |
+| Alembic 管理的数据库 | 存在受支持的 `alembic_version` revision，且 schema 指纹匹配该 revision | 创建必要备份后执行待运行的正常 Alembic revisions。 |
+| 未知或损坏状态 | 任一必要表、列、索引、外键、revision 或数据校验不匹配已知状态 | 创建并永久保留失败备份，输出具体诊断并拒绝启动。 |
+
+实现中的固定 fixture 必须完整描述每个已知状态的表、列、索引、外键和代表性数据；任何只匹配部分特征的数据库都按未知状态处理。
+
 ## 数据模型
 
 ### materials
@@ -205,8 +218,8 @@ READ_ALONG_HOME=/path/to/data
 | id | text pk | 稳定材料 ID，基于结构化正文哈希生成。 |
 | title | text | 材料标题。 |
 | content_hash | text | 清洗后正文哈希，用于去重。 |
-| created_at | text | ISO 时间。 |
-| updated_at | text | ISO 时间。 |
+| created_at | datetime | 带 UTC 时区语义的创建时间。 |
+| updated_at | datetime | 带 UTC 时区语义的更新时间。 |
 
 阅读材料只表示已成功原子保存的结果，不保存导入状态或导入错误。`queued`、`running`、`done`、`failed` 和错误信息属于 `import_jobs`。
 
@@ -221,7 +234,7 @@ READ_ALONG_HOME=/path/to/data
 | source_uri | text | 用于展示和回查的 URL 或上传文件名。 |
 | source_path | text nullable | 材料库管理的内部源文件路径。 |
 | is_primary | integer | 是否为首次导入的主来源。 |
-| created_at | text | ISO 时间。 |
+| created_at | datetime | 带 UTC 时区语义的创建时间。 |
 
 同一 `source_type` 和 `source_key` 只能对应一个来源身份；一篇阅读材料可以关联多个来源身份。
 
@@ -266,7 +279,7 @@ READ_ALONG_HOME=/path/to/data
 | material_id | text pk | 所属材料。 |
 | sentence_id | text | 当前句子。 |
 | playback_rate | real | 当前倍速。 |
-| updated_at | text | 更新时间。 |
+| updated_at | datetime | 带 UTC 时区语义的更新时间。 |
 
 ### import_jobs
 
@@ -276,8 +289,8 @@ READ_ALONG_HOME=/path/to/data
 | status | text | `queued`、`running`、`done`、`failed`。 |
 | material_id | text nullable | 完成后关联材料。 |
 | message | text nullable | 当前状态或错误。 |
-| created_at | text | 创建时间。 |
-| updated_at | text | 更新时间。 |
+| created_at | datetime | 带 UTC 时区语义的创建时间。 |
+| updated_at | datetime | 带 UTC 时区语义的更新时间。 |
 
 ## API 设计
 
@@ -515,9 +528,11 @@ MVP 不引入复杂状态库。使用 React hooks 和局部状态：
 
 Python 依赖新增：
 
+- `alembic`
 - `fastapi`
 - `uvicorn`
 - `scrapling`
+- `sqlmodel`
 - `pymupdf`
 - `python-multipart`
 
@@ -530,7 +545,6 @@ Python 依赖新增：
 
 MVP 不引入：
 
-- SQLAlchemy。
 - Celery/Redis。
 - Docker。
 - OCR。
@@ -541,7 +555,9 @@ MVP 不引入：
 
 ### 后端单元测试
 
-- SQLite 初始化和迁移。
+- SQLModel metadata 与 Alembic baseline schema 一致性。
+- 新数据库创建、已知历史数据库无损接管、备份和迁移失败拒绝启动。
+- SQLModel Session、SQLite 外键级联、写锁等待和并发保存。
 - 段落/句子切分。
 - 重复 URL 去重。
 - PDF 文本提取失败路径。
@@ -574,7 +590,7 @@ MVP 不引入：
 - 播放音频并验证句子高亮。
 - 刷新页面验证进度恢复。
 
-## 实施顺序
+## MVP 整体实施顺序
 
 1. 后端骨架、配置和 SQLite。
 2. 数据模型、repository 和材料详情 API。
@@ -585,9 +601,21 @@ MVP 不引入：
 7. 前端播放器、高亮、倍速和进度保存。
 8. 阅读设置、错误提示、删除材料和验收用例。
 
+## 数据库重构实施拆分
+
+数据库重构按以下顺序拆成独立小任务。每个任务完成后现有 API 和材料库行为都必须保持可用，不允许在中间状态要求清空本地数据库。
+
+1. **SQLModel 与 Alembic baseline**：添加依赖、`UTCDateTime`、SQLModel 表模型、Alembic 配置和 baseline revision；验证空数据库经 Alembic 创建后的真实 schema 与 metadata 一致。生产启动和 Repository 暂不切换。
+2. **历史 schema 诊断**：实现只读 schema 指纹识别、数据校验和独立诊断命令；使用固定 fixture 覆盖空数据库、早期五表、当前六表、已知半迁移和未知状态。不得修改被诊断数据库。
+3. **历史数据库接管与备份**：实现 SQLite backup API、保留策略和历史接管编排器；将全部已知状态无损接管到 baseline，未知或损坏状态保留备份并拒绝迁移。生产启动暂不切换。
+4. **启动迁移切换**：应用启动改用历史接管编排器和 `alembic upgrade head`；新库和旧库统一走迁移路径，随后删除 `db.py` 中手写 `SCHEMA`、旧表复制和半迁移修复逻辑。Repository 暂时保持现有兼容读写。
+5. **SQLModel Repository 与事务切换**：Repository 改用 SQLModel `Session` 和表达式，材料库拥有 Session、`BEGIN IMMEDIATE`、提交和回滚；移除业务运行时裸 SQL，并补齐级联删除、跨 Session UTC 时间、并发保存和完整材料批量读取测试。
+
+第一项是推荐的下一个最小任务；它只建立可验证的目标 schema，不接触现有数据库或切换生产运行路径。
+
 ## 关键取舍
 
-- 选择 SQLite 而非 ORM：减少 MVP 复杂度，数据模型小且稳定。
+- 选择 SQLite + SQLModel + Alembic：保留单机 SQLite 的简单部署，同时统一表模型、查询和可测试的 schema 演进。
 - 选择句子级音频文件：便于高亮、跳转和缓存，牺牲部分生成文件数量。
 - 选择 `say` 优先：最快获得本地 TTS，后续通过适配器替换。
 - 选择规则清洗而非 LLM：避免正文失真，保持朗读忠实。
