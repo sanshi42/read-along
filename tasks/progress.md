@@ -1,6 +1,6 @@
 # Project Progress
 
-最后更新：2026-06-09
+最后更新：2026-06-10
 
 ## 当前状态
 
@@ -34,7 +34,7 @@ Sprint 2 继续推进。真实本地环境 URL 导入回归已整体修复：书
 
 ## 当前任务
 
-无。`020-url-import-regression` 已完成。
+`023-sqlmodel-database-architecture`：设计 SQLModel 数据库架构、Alembic schema 演进和现有本地数据库无损接管方案。
 
 ## 下一步
 
@@ -49,6 +49,25 @@ Sprint 2 继续推进。真实本地环境 URL 导入回归已整体修复：书
 
 ## 最近变更记录
 
+- 2026-06-09：开始设计 SQLModel 数据库架构；确认采用 SQLModel 描述运行时表模型、Alembic 管理 schema 演进，并要求无损接管全部现有本地数据库和已知旧 schema。
+- 2026-06-09：确认应用启动时自动执行 Alembic 迁移；存在待执行迁移时先备份 SQLite 文件，迁移失败拒绝启动，新数据库同样通过 Alembic 创建。
+- 2026-06-09：确认 SQLModel 数据库表模型与领域/API DTO 分离；Repository 负责转换，API 和材料库外部调用方不直接操作数据库实体。
+- 2026-06-09：确认数据库继续作为关键结构不变量的最终防线；保留唯一约束、部分唯一索引、复合外键、级联删除和 `CHECK` 约束，特殊约束通过显式 Alembic revision 和 schema 测试保证。
+- 2026-06-09：确认材料库 Module 持有 SQLModel `Session` 和事务边界；Repository 只执行细粒度读写，不自行提交、回滚或关闭 Session，API 不直接操作业务 Session。
+- 2026-06-09：确认完整材料读取采用显式 SQLModel 查询并在 Session 内组装 DTO；不依赖 Relationship 默认懒加载，避免 N+1 查询和脱离 Session 的数据库实体。
+- 2026-06-09：确认数据库时间字段迁移为 UTC `datetime`，API 保持 ISO 8601 表现，旧时间文本严格解析；识别到 SQLite 不原生保存时区，后续需明确 UTC 适配方式。
+- 2026-06-09：确认通过 SQLAlchemy `UTCDateTime` TypeDecorator 保证 SQLite 时间语义；拒绝无时区值，写入转换为 UTC，读取恢复 UTC 时区。
+- 2026-06-09：确认保留全部现有字符串稳定 ID 和材料库生成权；不改用自增整数、UUID 或隐藏代理主键，保持数据、缓存路径和前端定位兼容。
+- 2026-06-09：确认枚举字段使用 Python `StrEnum` 和 SQLite 字符串列加显式 `CHECK`；不使用 SQLAlchemy 原生 Enum，允许值变化必须经过 Alembic migration。
+- 2026-06-10：确认删除级联由 SQLite 外键执行，ORM Relationship 使用 `passive_deletes=True`，并通过 Engine 连接事件确保每个连接启用外键约束。
+- 2026-06-10：确认材料库写操作保留 `BEGIN IMMEDIATE`，SQLite 启用 WAL 并设置 5 秒 `busy_timeout`；耗时准备工作尽量移到写锁前，最终文件重命名继续与事务提交协调。
+- 2026-06-10：确认迁移备份使用 SQLite backup API，仅在存在待执行 migration 时创建；成功迁移前备份保留最近 3 个，失败迁移备份永久保留，schema 迁移不备份源文件和音频。
+- 2026-06-10：确认桥接迁移严格识别已知历史 schema；未知或损坏状态生成备份和具体诊断后拒绝迁移与启动，不进行猜测性修复或静默丢弃数据。
+- 2026-06-10：确认使用启动迁移编排器接管历史库并标记 SQLModel baseline；Alembic revision 链保持干净，只负责 baseline 及后续正常 schema 演进。
+- 2026-06-10：确认业务运行时代码禁止裸 SQL；历史接管、Alembic、SQLite PRAGMA、`BEGIN IMMEDIATE` 和必要 schema 校验可在数据库基础设施中受控使用。
+- 2026-06-10：确认 `import_jobs` 仅纳入 SQLModel baseline schema 和历史数据无损迁移；本次重构不新增导入任务业务 Repository 或 API。
+- 2026-06-10：确认所有数据库集成测试必须通过生产迁移编排器和 Alembic 创建真实文件 SQLite；禁止 `create_all()` 和内存数据库绕过真实路径，并检查 metadata/schema 漂移。
+- 2026-06-10：确认 SQLModel 表模型只声明服务于所有权和被动删除的最小 Relationship；不建立完整 ORM 对象图，不通过 relationship cascade 保存整篇材料。
 - 2026-06-09：整体修复真实本地环境 URL 导入回归；书架页恢复公开网页/已登录 Chrome 两种导入方式，Chrome fallback 可按目标 URL 搜索所有普通标签页；新增旧 `materials` 单表迁移并修复 `material_sources` 残留旧外键；公开网页在临时库、真实默认库和当前 API 导入成功，得到单篇 Chrome 模式在临时库完整导入成功，in-app browser 验证 UI，`make check` 全量通过。
 - 2026-06-08：完成开发工具链基线；开发命令改为 uv 默认 editable mode，新增 `Makefile` 一键启动和检查入口，新增 pre-commit local hooks，使用 `pyrefly init` 从 mypy 自动迁移到 Pyrefly 并移除 mypy，配置 Ruff isort、Google docstring 和 single quote，`make dev` 冒烟验证通过，`make check` 全量通过。
 - 2026-06-08：修复公开网页和得到 Chrome 导入失败；在 `main` 上恢复 `mode=chrome` 导入路径，公开网页优先抽取 `.prose` 等正文容器，得到 Chrome 标签页先按完整 query 匹配、再按 host/path 重试，DevTools 不可用时回退读取前台 Chrome 标签页并校验 host/path；真实 01MVP URL 导入成功，新增回归测试，`MVP-014` 进入 `Review`。
