@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-SQLModel 数据库架构设计已完成。技术方案已明确 SQLModel/Alembic 职责、现有数据库无损接管、启动迁移、备份失败策略和五步实施拆分；下一步先建立可验证的 SQLModel/Alembic baseline，不切换生产运行路径。
+SQLModel 与 Alembic baseline 已完成。空数据库可以通过 Alembic 创建目标 schema，SQLModel metadata、SQLite 特殊约束和 UTC 时间语义已有真实文件测试覆盖；生产启动和 Repository 仍使用现有路径，下一步实现只读历史 schema 诊断。
 
 ## 已完成
 
@@ -32,15 +32,16 @@ SQLModel 数据库架构设计已完成。技术方案已明确 SQLModel/Alembic
 | 019 | 开发工具链基线 | Done | `Makefile`、pre-commit local hooks、Pyrefly 迁移、Ruff 规则、uv editable mode 开发命令 |
 | 020 | 修复真实本地环境 URL 导入回归 | Done | 导入方式 UI 恢复、Chrome 目标标签页选择、旧库 schema 迁移与残留外键修复、公开网页和得到单篇 URL 验证、131 个测试 |
 | 023 | 设计 SQLModel 数据库架构与迁移方案 | Done | SQLModel/Alembic 职责、已知 schema 指纹、无损接管、启动迁移、备份策略和五步实施拆分 |
+| 024 | 建立 SQLModel 与 Alembic baseline | Done | SQLModel 表模型、`UTCDateTime`、Alembic baseline revision、真实 SQLite schema/metadata 一致性测试、143 个测试 |
 
 ## 当前任务
 
-无。`023-sqlmodel-database-architecture` 已完成。
+无。`024-sqlmodel-alembic-baseline` 已完成。
 
 ## 下一步
 
-1. `024-sqlmodel-alembic-baseline`：添加 SQLModel/Alembic 依赖、`UTCDateTime`、SQLModel 表模型和 baseline revision，验证空数据库真实 schema 与 metadata 一致；不切换生产启动或 Repository。
-2. 后续依次实现历史 schema 诊断、历史数据库接管与备份、启动迁移切换、SQLModel Repository 与事务切换。
+1. `025-historical-schema-diagnostics`：实现只读 schema 指纹识别、数据校验和独立诊断命令；使用固定 fixture 覆盖空数据库、早期五表、当前六表、已知半迁移和未知状态，不修改被诊断数据库。
+2. 后续依次实现历史数据库接管与备份、启动迁移切换、SQLModel Repository 与事务切换。
 3. 数据库重构后继续 Sprint 2：用已登录 Chrome 复验目标得到单篇 URL，通过后将 `MVP-014` 标记为 `Done`，再补齐 `MVP-015` 的清晰重复导入反馈。
 
 ## 阻塞项
@@ -49,6 +50,7 @@ SQLModel 数据库架构设计已完成。技术方案已明确 SQLModel/Alembic
 
 ## 最近变更记录
 
+- 2026-06-10：完成 SQLModel 与 Alembic baseline；新增 `UTCDateTime`、六张业务表的 SQLModel 实体、Alembic 配置和 baseline revision，真实文件 SQLite 测试覆盖 metadata/schema 一致性、特殊约束和 UTC 时间跨 Session 读取；生产启动和 Repository 未切换，`make check` 通过。
 - 2026-06-10：完成 SQLModel 数据库架构设计；补齐已知 schema 状态、五步实施拆分和下一最小任务，修正技术方案中“不引入 SQLAlchemy”的旧取舍，并删除已过时的起始 prompt。
 - 2026-06-09：开始设计 SQLModel 数据库架构；确认采用 SQLModel 描述运行时表模型、Alembic 管理 schema 演进，并要求无损接管全部现有本地数据库和已知旧 schema。
 - 2026-06-09：确认应用启动时自动执行 Alembic 迁移；存在待执行迁移时先备份 SQLite 文件，迁移失败拒绝启动，新数据库同样通过 Alembic 创建。

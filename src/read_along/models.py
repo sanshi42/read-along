@@ -22,6 +22,15 @@ class AudioStatus(StrEnum):
     FAILED = 'failed'
 
 
+class ImportJobStatus(StrEnum):
+    """导入任务状态。"""
+
+    QUEUED = 'queued'
+    RUNNING = 'running'
+    DONE = 'done'
+    FAILED = 'failed'
+
+
 class DataModel(BaseModel):
     """项目 DTO 的 Pydantic 基类。"""
 
