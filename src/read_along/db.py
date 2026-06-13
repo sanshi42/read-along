@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS reading_progress (
     material_id TEXT PRIMARY KEY REFERENCES materials (id) ON DELETE CASCADE,
     sentence_id TEXT NOT NULL,
     playback_rate REAL NOT NULL CHECK (playback_rate > 0),
+    playback_completed INTEGER NOT NULL CHECK (playback_completed IN (0, 1)),
     updated_at TEXT NOT NULL,
     FOREIGN KEY (sentence_id, material_id)
         REFERENCES sentences (id, material_id) ON DELETE CASCADE

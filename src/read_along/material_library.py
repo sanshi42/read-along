@@ -268,6 +268,7 @@ class MaterialLibrary:
         material_id: str,
         sentence_id: str,
         playback_rate: float,
+        playback_completed: bool = False,
     ) -> ReadingProgress:
         """保存指定材料的当前句子和播放倍速。"""
         if not math.isfinite(playback_rate) or playback_rate <= 0:
@@ -285,11 +286,18 @@ class MaterialLibrary:
                     sentence_id=sentence_id,
                 ):
                     raise InvalidProgressError('句子不属于指定阅读材料')
+                if playback_completed and not self.repository.is_last_sentence(
+                    connection,
+                    material_id=material_id,
+                    sentence_id=sentence_id,
+                ):
+                    raise InvalidProgressError('只有最后一句可以标记为朗读完成')
                 self.repository.save_progress(
                     connection,
                     material_id=material_id,
                     sentence_id=sentence_id,
                     playback_rate=playback_rate,
+                    playback_completed=playback_completed,
                     updated_at=now,
                 )
                 self.repository.update_material_timestamp(

@@ -10,12 +10,21 @@ export interface MaterialSource {
   is_primary: boolean;
 }
 
+export interface ReadingProgress {
+  material_id: string;
+  sentence_id: string;
+  playback_rate: number;
+  playback_completed: boolean;
+  updated_at: string;
+}
+
 export interface MaterialSummary {
   id: string;
   title: string;
   created_at: string;
   updated_at: string;
   primary_source: MaterialSource;
+  progress: ReadingProgress | null;
 }
 
 export interface MaterialDetail extends MaterialSummary {
@@ -67,6 +76,19 @@ export function getMaterial(materialId: string): Promise<MaterialDetail> {
 
 export function sentenceAudioUrl(materialId: string, sentenceId: string): string {
   return `/api/materials/${encodeURIComponent(materialId)}/sentences/${encodeURIComponent(sentenceId)}/audio`;
+}
+
+export function saveProgress(
+  materialId: string,
+  progress: Pick<ReadingProgress, "sentence_id" | "playback_rate" | "playback_completed">,
+): Promise<ReadingProgress> {
+  return request<ReadingProgress>(`/api/materials/${encodeURIComponent(materialId)}/progress`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(progress),
+  });
 }
 
 export function importUrl(url: string, mode: UrlImportMode = "auto"): Promise<MaterialImportResult> {

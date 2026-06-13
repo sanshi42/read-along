@@ -91,9 +91,24 @@ def test_reading_progress_requires_positive_playback_rate() -> None:
                 'material_id': 'mat-1',
                 'sentence_id': 'sentence-1',
                 'playback_rate': 0,
+                'playback_completed': False,
                 'updated_at': '2026-06-06T00:00:00Z',
             }
         )
+
+
+def test_reading_progress_expresses_playback_completed_state() -> None:
+    progress = ReadingProgress.model_validate(
+        {
+            'material_id': 'mat-1',
+            'sentence_id': 'sentence-1',
+            'playback_rate': 1.25,
+            'playback_completed': True,
+            'updated_at': '2026-06-06T00:00:00Z',
+        }
+    )
+
+    assert progress.playback_completed is True
 
 
 def test_material_detail_expresses_sentences_nested_by_paragraph() -> None:

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from read_along.config import AppConfig
-from read_along.db import DatabaseSchemaError, connect_database, initialize_database
+from read_along.db import SCHEMA, DatabaseSchemaError, connect_database, initialize_database
 from read_along.storage import StoragePaths
 
 EXPECTED_TABLES = {
@@ -129,6 +129,22 @@ def test_initialize_database_rejects_half_migrated_schema_without_modifying_it(t
     assert paths.database.read_bytes() == before
 
 
+def test_initialize_database_rejects_schema_without_playback_completed_without_modifying_it(tmp_path: Path) -> None:
+    paths = storage_paths(tmp_path)
+    paths.ensure_directories()
+    completed_column = '    playback_completed INTEGER NOT NULL CHECK (playback_completed IN (0, 1)),\n'
+    legacy_schema = SCHEMA.replace(completed_column, '')
+    assert legacy_schema != SCHEMA
+    with closing(connect_database(paths.database)) as connection:
+        connection.executescript(legacy_schema)
+    before = paths.database.read_bytes()
+
+    with pytest.raises(DatabaseSchemaError, match='不支持当前数据库结构'):
+        initialize_database(paths)
+
+    assert paths.database.read_bytes() == before
+
+
 def test_initialize_database_rejects_existing_empty_database(tmp_path: Path) -> None:
     paths = storage_paths(tmp_path)
     paths.ensure_directories()
@@ -204,10 +220,10 @@ def test_schema_rejects_cross_material_content_relationships(tmp_path: Path) -> 
             connection.execute(
                 """
                 INSERT INTO reading_progress (
-                    material_id, sentence_id, playback_rate, updated_at
-                ) VALUES (?, ?, ?, ?)
+                    material_id, sentence_id, playback_rate, playback_completed, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
                 """,
-                ('mat-2', 'sentence-1', 1.0, '2026-06-06T00:00:00Z'),
+                ('mat-2', 'sentence-1', 1.0, 0, '2026-06-06T00:00:00Z'),
             )
 
 
@@ -253,10 +269,10 @@ def test_deleting_material_cascades_to_reading_content_and_progress(
         connection.execute(
             """
             INSERT INTO reading_progress (
-                material_id, sentence_id, playback_rate, updated_at
-            ) VALUES (?, ?, ?, ?)
+                material_id, sentence_id, playback_rate, playback_completed, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
             """,
-            ('mat-1', 'sentence-1', 1.0, '2026-06-06T00:00:00Z'),
+            ('mat-1', 'sentence-1', 1.0, 0, '2026-06-06T00:00:00Z'),
         )
         connection.execute('DELETE FROM materials WHERE id = ?', ('mat-1',))
         connection.commit()

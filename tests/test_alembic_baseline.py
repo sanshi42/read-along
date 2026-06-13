@@ -81,7 +81,10 @@ def test_alembic_baseline_creates_special_sqlite_constraints(tmp_path: Path) -> 
     assert primary_indexes['ix_material_sources_one_primary']['dialect_options']['sqlite_where'] is not None
     assert source_checks == {'ck_material_sources_is_primary', 'ck_material_sources_source_type'}
     assert sentence_checks == {'ck_sentences_audio_status'}
-    assert progress_checks == {'ck_reading_progress_playback_rate'}
+    assert progress_checks == {
+        'ck_reading_progress_playback_completed',
+        'ck_reading_progress_playback_rate',
+    }
     assert job_checks == {'ck_import_jobs_status'}
     assert sentence_foreign_keys['fk_sentences_paragraph_material']['options']['ondelete'] == 'CASCADE'
     assert progress_foreign_keys['fk_reading_progress_sentence_material']['options']['ondelete'] == 'CASCADE'

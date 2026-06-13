@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from typer.testing import CliRunner
 
@@ -29,7 +31,7 @@ def test_root_cli_registers_serve_command() -> None:
     assert 'diagnose-db' not in result.output
 
 
-def test_serve_uses_default_local_binding(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_serve_uses_default_local_binding(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     calls: dict[str, object] = {}
     fake_uvicorn = FakeUvicorn()
 
@@ -38,6 +40,8 @@ def test_serve_uses_default_local_binding(monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setattr(cli, '_ensure_bind_available', fake_bind)
     monkeypatch.setattr(cli, '_load_uvicorn', lambda: fake_uvicorn)
+    monkeypatch.setenv('READ_ALONG_HOME', str(tmp_path / 'data'))
+    monkeypatch.setattr('read_along.api._state', None)
 
     result = CliRunner().invoke(app, ['serve'])
 

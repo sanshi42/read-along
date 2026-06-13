@@ -218,10 +218,29 @@ def test_shelf_and_progress_follow_recent_activity(tmp_path: Path) -> None:
     assert shelf[0].primary_source.source_uri == 'https://example.com/first'
 
 
+def test_save_progress_persists_playback_completed_state(tmp_path: Path) -> None:
+    library, _ = material_library(tmp_path)
+    material = library.save(url_draft())
+    last_sentence = material.material.paragraphs[0].sentences[-1]
+
+    progress = library.save_progress(
+        material.material.id,
+        last_sentence.id,
+        1.5,
+        playback_completed=True,
+    )
+    reopened = MaterialLibrary(library.storage_paths).get(material.material.id)
+
+    assert progress.playback_completed is True
+    assert reopened.progress is not None
+    assert reopened.progress.playback_completed is True
+
+
 def test_save_progress_validates_material_sentence_and_rate(tmp_path: Path) -> None:
     library, _ = material_library(tmp_path)
     first = library.save(url_draft(url='https://example.com/first', sentences=('甲。',)))
     second = library.save(url_draft(url='https://example.com/second', sentences=('乙。',)))
+    multi_sentence = library.save(url_draft(url='https://example.com/multi', sentences=('第一句。', '最后一句。')))
 
     with pytest.raises(MaterialNotFoundError):
         library.save_progress('missing', first.material.paragraphs[0].sentences[0].id, 1.0)
@@ -236,6 +255,13 @@ def test_save_progress_validates_material_sentence_and_rate(tmp_path: Path) -> N
             first.material.id,
             first.material.paragraphs[0].sentences[0].id,
             0,
+        )
+    with pytest.raises(InvalidProgressError, match='最后一句'):
+        library.save_progress(
+            multi_sentence.material.id,
+            multi_sentence.material.paragraphs[0].sentences[0].id,
+            1.0,
+            playback_completed=True,
         )
 
 

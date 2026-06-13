@@ -77,6 +77,58 @@ def test_material_detail_returns_chinese_not_found_error(tmp_path: Path) -> None
     assert response.json() == {'detail': '阅读材料不存在：mat_missing'}
 
 
+def test_progress_endpoint_saves_current_sentence_rate_and_completion(tmp_path: Path) -> None:
+    library = _make_library(tmp_path)
+    material = _save_url_material(library)
+    sentence = material.material.paragraphs[0].sentences[-1]
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+
+    response = client.put(
+        f'/api/materials/{material.material.id}/progress',
+        json={
+            'sentence_id': sentence.id,
+            'playback_rate': 1.5,
+            'playback_completed': True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()['material_id'] == material.material.id
+    assert response.json()['sentence_id'] == sentence.id
+    assert response.json()['playback_rate'] == 1.5
+    assert response.json()['playback_completed'] is True
+    saved_progress = library.get(material.material.id).progress
+    assert saved_progress is not None
+    assert saved_progress.playback_completed is True
+
+
+def test_progress_endpoint_reports_invalid_material_and_sentence(tmp_path: Path) -> None:
+    library = _make_library(tmp_path)
+    first = _save_url_material(library, url='https://example.com/first')
+    second = _save_url_material(library, url='https://example.com/second', sentences=['另一句。'])
+    first_sentence = first.material.paragraphs[0].sentences[0]
+    second_sentence = second.material.paragraphs[0].sentences[0]
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+
+    missing = client.put(
+        '/api/materials/missing/progress',
+        json={'sentence_id': first_sentence.id, 'playback_rate': 1.0, 'playback_completed': False},
+    )
+    unrelated = client.put(
+        f'/api/materials/{first.material.id}/progress',
+        json={'sentence_id': second_sentence.id, 'playback_rate': 1.0, 'playback_completed': False},
+    )
+
+    assert missing.status_code == 404
+    assert missing.json() == {'detail': '阅读材料不存在：missing'}
+    assert unrelated.status_code == 422
+    assert unrelated.json() == {'detail': '句子不属于指定阅读材料'}
+
+
 def test_sentence_audio_endpoint_generates_and_reuses_wav(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

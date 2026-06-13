@@ -106,7 +106,12 @@ def upgrade() -> None:
         sa.Column('material_id', sa.String(length=64), nullable=False),
         sa.Column('sentence_id', sa.String(length=64), nullable=False),
         sa.Column('playback_rate', sa.Float(), nullable=False),
+        sa.Column('playback_completed', sa.Integer(), nullable=False),
         sa.Column('updated_at', sa.DateTime(), nullable=False),
+        sa.CheckConstraint(
+            'playback_completed IN (0, 1)',
+            name='ck_reading_progress_playback_completed',
+        ),
         sa.CheckConstraint('playback_rate > 0', name='ck_reading_progress_playback_rate'),
         sa.ForeignKeyConstraint(
             ['material_id'],

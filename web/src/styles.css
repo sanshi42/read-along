@@ -481,11 +481,24 @@ h1 {
 .reader-sentence {
   cursor: pointer;
   border-radius: 2px;
-  transition: opacity 140ms ease;
+  transition:
+    background-color 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
 }
 
 .reader-sentence:hover {
   opacity: 0.64;
+}
+
+.reader-sentence-current {
+  background: rgba(184, 140, 83, 0.18);
+  box-shadow: 0 0 0 3px rgba(184, 140, 83, 0.18);
+}
+
+.reader-sentence-playing {
+  background: rgba(194, 126, 49, 0.34);
+  box-shadow: 0 0 0 4px rgba(194, 126, 49, 0.24);
 }
 
 .reader-sentence:focus-visible {
@@ -536,10 +549,13 @@ h1 {
 
 .player-controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  justify-content: end;
 }
 
-.player-controls button {
+.player-controls button,
+.playback-rate select {
   min-height: 40px;
   padding: 0 13px;
   border: 1px solid rgba(75, 69, 59, 0.22);
@@ -552,6 +568,20 @@ h1 {
   cursor: pointer;
 }
 
+.playback-rate {
+  display: grid;
+  gap: 2px;
+  color: #746d62;
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+
+.playback-rate select {
+  min-width: 72px;
+  appearance: none;
+  text-align: center;
+}
+
 .player-controls .player-primary {
   min-width: 70px;
   border-color: #6d4a28;
@@ -559,7 +589,8 @@ h1 {
   background: #6d4a28;
 }
 
-.player-controls button:focus-visible {
+.player-controls button:focus-visible,
+.playback-rate select:focus-visible {
   outline: 2px solid rgba(139, 94, 52, 0.3);
   outline-offset: 2px;
 }
@@ -567,6 +598,19 @@ h1 {
 .player-controls button:disabled {
   cursor: not-allowed;
   opacity: 0.42;
+}
+
+.player-error .inline-action {
+  margin-left: 7px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
 
 @media (max-width: 800px) {
@@ -616,6 +660,10 @@ h1 {
 
   .player-controls {
     display: grid;
-    grid-template-columns: 1fr 1.2fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .playback-rate {
+    grid-column: 1 / -1;
   }
 }

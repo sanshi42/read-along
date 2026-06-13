@@ -63,7 +63,10 @@ def test_sqlmodel_metadata_declares_named_database_invariants() -> None:
         'ck_material_sources_source_type',
     }
     assert constraint_names('sentences', CheckConstraint) == {'ck_sentences_audio_status'}
-    assert constraint_names('reading_progress', CheckConstraint) == {'ck_reading_progress_playback_rate'}
+    assert constraint_names('reading_progress', CheckConstraint) == {
+        'ck_reading_progress_playback_completed',
+        'ck_reading_progress_playback_rate',
+    }
     assert constraint_names('import_jobs', CheckConstraint) == {'ck_import_jobs_status'}
 
 

@@ -122,6 +122,7 @@ class ReadingProgress(DataModel):
     material_id: str
     sentence_id: str
     playback_rate: float = Field(gt=0)
+    playback_completed: bool
     updated_at: datetime
 
 

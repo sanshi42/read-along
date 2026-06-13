@@ -158,6 +158,7 @@ class ReadingProgressRow(SQLModel, table=True):
     __tablename__ = 'reading_progress'  # pyrefly: ignore [bad-override]
     __table_args__ = (
         CheckConstraint('playback_rate > 0', name='ck_reading_progress_playback_rate'),
+        CheckConstraint('playback_completed IN (0, 1)', name='ck_reading_progress_playback_completed'),
         ForeignKeyConstraint(
             ('sentence_id', 'material_id'),
             ('sentences.id', 'sentences.material_id'),
@@ -176,6 +177,7 @@ class ReadingProgressRow(SQLModel, table=True):
     )
     sentence_id: str = Field(sa_column=Column(String(ID_LENGTH), nullable=False))
     playback_rate: float = Field(sa_column=Column(Float, nullable=False))
+    playback_completed: bool = Field(sa_column=Column(Integer, nullable=False))
     updated_at: datetime = Field(sa_column=Column(UTCDateTime(), nullable=False))
 
     material: MaterialRow = Relationship(

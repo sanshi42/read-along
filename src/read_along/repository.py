@@ -321,6 +321,30 @@ class Repository:
         ).fetchone()
         return row is not None
 
+    def is_last_sentence(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        material_id: str,
+        sentence_id: str,
+    ) -> bool:
+        """判断句子是否是指定阅读材料的最后一句。"""
+        row = connection.execute(
+            """
+            SELECT 1
+            FROM sentences
+            WHERE id = ?
+              AND material_id = ?
+              AND "index" = (
+                  SELECT MAX("index")
+                  FROM sentences
+                  WHERE material_id = ?
+              )
+            """,
+            (sentence_id, material_id, material_id),
+        ).fetchone()
+        return row is not None
+
     def save_progress(
         self,
         connection: sqlite3.Connection,
@@ -328,6 +352,7 @@ class Repository:
         material_id: str,
         sentence_id: str,
         playback_rate: float,
+        playback_completed: bool,
         updated_at: str,
     ) -> None:
         """覆盖保存阅读进度。"""
@@ -337,14 +362,16 @@ class Repository:
                 material_id,
                 sentence_id,
                 playback_rate,
+                playback_completed,
                 updated_at
-            ) VALUES (?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?)
             ON CONFLICT (material_id) DO UPDATE SET
                 sentence_id = excluded.sentence_id,
                 playback_rate = excluded.playback_rate,
+                playback_completed = excluded.playback_completed,
                 updated_at = excluded.updated_at
             """,
-            (material_id, sentence_id, playback_rate, updated_at),
+            (material_id, sentence_id, playback_rate, playback_completed, updated_at),
         )
 
     def get_progress(

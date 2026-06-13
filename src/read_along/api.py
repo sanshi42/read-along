@@ -16,6 +16,7 @@ from read_along.material_library import (
     AudioGenerationError,
     AudioNotFoundError,
     InvalidDraftError,
+    InvalidProgressError,
     MaterialLibrary,
     MaterialNotFoundError,
     SourceChangedError,
@@ -29,6 +30,14 @@ class UrlImportRequest(BaseModel):
 
     url: str
     mode: str = 'auto'
+
+
+class SaveProgressRequest(BaseModel):
+    """阅读进度保存请求。"""
+
+    sentence_id: str
+    playback_rate: float
+    playback_completed: bool
 
 
 class AppState:
@@ -137,6 +146,31 @@ def create_app() -> FastAPI:
             media_type='audio/wav',
             headers={'Cache-Control': 'private, max-age=31536000, immutable'},
         )
+
+    @app.put('/api/materials/{material_id}/progress')
+    def save_progress(
+        material_id: str,
+        request: SaveProgressRequest,
+        *,
+        library: MaterialLibrary = Depends(get_material_library),
+    ) -> Any:
+        try:
+            return library.save_progress(
+                material_id,
+                request.sentence_id,
+                request.playback_rate,
+                playback_completed=request.playback_completed,
+            ).model_dump(mode='json')
+        except MaterialNotFoundError as exc:
+            return JSONResponse(
+                status_code=404,
+                content={'detail': str(exc)},
+            )
+        except InvalidProgressError as exc:
+            return JSONResponse(
+                status_code=422,
+                content={'detail': str(exc)},
+            )
 
     @app.post('/api/import/pdf')
     async def import_pdf_endpoint(
