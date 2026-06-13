@@ -2,27 +2,20 @@
 
 ## Status
 
-单篇导入闭环已经完成，材料库、书架和阅读页基础能力可用。当前进入单句本地音频生成，之后补齐音频缓存和朗读闭环。
+单篇导入闭环和单句本地音频生成已经完成，材料库、书架和阅读页基础能力可用。当前进入句子音频缓存与访问 API，之后补齐朗读闭环。
 
 阻塞项：无。
 
 ## Current Task
-
-### T003: 实现单句 macOS say TTS 适配器
-
-- Goal: 为单个句子可靠生成本地音频。
-- Boundary: `say` 可用性检测、单句生成和清晰失败结果，不实现批量队列。
-- Verification: 自动测试覆盖成功和失败路径；真实 macOS 环境生成一条可播放音频。
-- Status: Ready。
-
-## Next Tasks
 
 ### T004: 实现句子音频缓存与访问 API
 
 - Goal: 已生成句子音频可以复用并由前端访问。
 - Boundary: 按阅读材料和句子缓存音频，提供必要 API，不实现独立任务进度。
 - Verification: 重复请求不重新生成音频；缺失和失败路径有明确结果；运行 `make check`。
-- Status: Planned。
+- Status: Ready。
+
+## Next Tasks
 
 ### T005: 实现基础播放器
 
@@ -46,6 +39,13 @@
 - Status: Planned。
 
 ## Done
+
+### T003: 实现单句 macOS say TTS 适配器
+
+- Goal: 为单个句子可靠生成本地音频。
+- Boundary: `say` 可用性检测、单句生成和清晰失败结果，不实现批量队列。
+- Verification: 自动测试覆盖成功、能力检测、输入与路径校验、超时、命令失败、WAV 校验和并发占用；真实 macOS `say` 生成一条由 `afinfo` 识别的单声道 22.05 kHz Int16 WAV；运行 `make check`，172 项测试及前端生产构建通过。
+- Status: Done。
 
 ### T002: 补齐重复导入反馈
 
