@@ -3,8 +3,10 @@ from pydantic import ValidationError
 
 from read_along.models import (
     AudioStatus,
+    ImportOutcome,
     Material,
     MaterialDetail,
+    MaterialImportResult,
     MaterialSource,
     ParagraphDetail,
     ReadingMaterialDraft,
@@ -114,6 +116,24 @@ def test_material_detail_expresses_sentences_nested_by_paragraph() -> None:
 
     assert detail.progress is None
     assert detail.paragraphs[0].sentences[0].id == 'sentence-1'
+
+
+def test_material_import_result_expresses_outcome_and_material() -> None:
+    detail = MaterialDetail.model_validate(
+        {
+            **material_data(),
+            'primary_source': source_data(),
+            'sources': [source_data()],
+            'progress': None,
+            'paragraphs': [],
+        }
+    )
+
+    result = MaterialImportResult(outcome=ImportOutcome.REUSED_SOURCE, material=detail)
+
+    assert result.outcome is ImportOutcome.REUSED_SOURCE
+    assert result.material.id == 'mat-1'
+    assert result.model_dump(mode='json')['outcome'] == 'reused_source'
 
 
 def test_reading_material_draft_excludes_persistence_fields() -> None:

@@ -18,6 +18,7 @@ from read_along.material_library import (
     SourceChangedError,
 )
 from read_along.models import (
+    ImportOutcome,
     ReadingMaterialDraft,
     ReadingMaterialDraftParagraph,
     SourceType,
@@ -69,8 +70,9 @@ def test_save_persists_complete_material_and_owned_source_file(tmp_path: Path) -
     library, _ = material_library(tmp_path)
 
     result = library.save(pdf_draft(tmp_path))
-    reopened = MaterialLibrary(library.storage_paths).get(result.id)
+    reopened = MaterialLibrary(library.storage_paths).get(result.material.id)
 
+    assert result.outcome is ImportOutcome.CREATED
     assert reopened.title == 'PDF 材料'
     assert reopened.primary_source.source_type is SourceType.PDF
     assert reopened.primary_source.is_primary is True
@@ -99,8 +101,10 @@ def test_same_source_and_content_returns_existing_material(tmp_path: Path) -> No
     first = library.save(draft)
     second = library.save(draft)
 
-    assert second.id == first.id
-    assert len(second.sources) == 1
+    assert first.outcome is ImportOutcome.CREATED
+    assert second.outcome is ImportOutcome.REUSED_SOURCE
+    assert second.material.id == first.material.id
+    assert len(second.material.sources) == 1
     assert len(list(paths.uploads.iterdir())) == 1
 
 
@@ -117,11 +121,13 @@ def test_same_content_from_different_source_adds_identity_without_replacing_titl
         )
     )
 
-    assert second.id == first.id
-    assert second.title == '首次标题'
-    assert len(second.sources) == 2
-    assert second.sources[1].is_primary is False
-    assert second.sources[1].source_path is None
+    assert first.outcome is ImportOutcome.CREATED
+    assert second.outcome is ImportOutcome.REUSED_CONTENT
+    assert second.material.id == first.material.id
+    assert second.material.title == '首次标题'
+    assert len(second.material.sources) == 2
+    assert second.material.sources[1].is_primary is False
+    assert second.material.sources[1].source_path is None
 
 
 def test_normalized_url_identifies_same_source(tmp_path: Path) -> None:
@@ -130,19 +136,23 @@ def test_normalized_url_identifies_same_source(tmp_path: Path) -> None:
 
     second = library.save(url_draft(url='https://example.com/article'))
 
-    assert second.id == first.id
-    assert len(second.sources) == 1
-    assert second.primary_source.source_key == 'https://example.com/article'
+    assert second.outcome is ImportOutcome.REUSED_SOURCE
+    assert second.material.id == first.material.id
+    assert len(second.material.sources) == 1
+    assert second.material.primary_source.source_key == 'https://example.com/article'
 
 
 def test_same_source_with_changed_content_raises_conflict(tmp_path: Path) -> None:
     library, _ = material_library(tmp_path)
     original = library.save(url_draft())
 
-    with pytest.raises(SourceChangedError, match='发生变化'):
+    with pytest.raises(
+        SourceChangedError,
+        match='此来源的正文与已保存版本不同。为避免覆盖现有阅读材料，本次未导入。',
+    ):
         library.save(url_draft(sentences=('新的正文。',)))
 
-    assert library.get(original.id).paragraphs[0].sentences[0].text == '第一句。'
+    assert library.get(original.material.id).paragraphs[0].sentences[0].text == '第一句。'
 
 
 def test_save_failure_rolls_back_database_and_cleans_copied_file(
@@ -189,11 +199,15 @@ def test_shelf_and_progress_follow_recent_activity(tmp_path: Path) -> None:
     first = library.save(url_draft(url='https://example.com/first', sentences=('甲。',)))
     second = library.save(url_draft(url='https://example.com/second', sentences=('乙。',)))
 
-    progress = library.save_progress(first.id, first.paragraphs[0].sentences[0].id, 1.25)
+    progress = library.save_progress(
+        first.material.id,
+        first.material.paragraphs[0].sentences[0].id,
+        1.25,
+    )
     shelf = library.list_shelf()
 
     assert progress.playback_rate == 1.25
-    assert [item.id for item in shelf] == [first.id, second.id]
+    assert [item.id for item in shelf] == [first.material.id, second.material.id]
     assert shelf[0].progress is not None
     assert shelf[0].primary_source.source_uri == 'https://example.com/first'
 
@@ -204,25 +218,33 @@ def test_save_progress_validates_material_sentence_and_rate(tmp_path: Path) -> N
     second = library.save(url_draft(url='https://example.com/second', sentences=('乙。',)))
 
     with pytest.raises(MaterialNotFoundError):
-        library.save_progress('missing', first.paragraphs[0].sentences[0].id, 1.0)
+        library.save_progress('missing', first.material.paragraphs[0].sentences[0].id, 1.0)
     with pytest.raises(InvalidProgressError, match='不属于'):
-        library.save_progress(first.id, second.paragraphs[0].sentences[0].id, 1.0)
+        library.save_progress(
+            first.material.id,
+            second.material.paragraphs[0].sentences[0].id,
+            1.0,
+        )
     with pytest.raises(InvalidProgressError, match='大于零'):
-        library.save_progress(first.id, first.paragraphs[0].sentences[0].id, 0)
+        library.save_progress(
+            first.material.id,
+            first.material.paragraphs[0].sentences[0].id,
+            0,
+        )
 
 
 def test_delete_is_idempotent_and_cleans_owned_files(tmp_path: Path) -> None:
     library, paths = material_library(tmp_path)
     material = library.save(pdf_draft(tmp_path))
-    audio_dir = paths.audio / material.id
+    audio_dir = paths.audio / material.material.id
     audio_dir.mkdir()
     (audio_dir / 'sentence.aiff').write_bytes(b'audio')
-    source_path = Path(material.primary_source.source_path or '')
+    source_path = Path(material.material.primary_source.source_path or '')
 
-    library.delete(material.id)
-    library.delete(material.id)
+    library.delete(material.material.id)
+    library.delete(material.material.id)
 
     with pytest.raises(MaterialNotFoundError):
-        library.get(material.id)
+        library.get(material.material.id)
     assert not source_path.exists()
     assert not audio_dir.exists()

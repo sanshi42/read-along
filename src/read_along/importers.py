@@ -14,7 +14,7 @@ from read_along.browser import (
 from read_along.extractors import pdf_page_texts, structure_text
 from read_along.material_library import MaterialLibrary
 from read_along.models import (
-    MaterialDetail,
+    MaterialImportResult,
     ReadingMaterialDraft,
     ReadingMaterialDraftParagraph,
     SourceType,
@@ -64,7 +64,7 @@ def import_pdf(
     file_path: Path,
     filename: str,
     library: MaterialLibrary,
-) -> MaterialDetail:
+) -> MaterialImportResult:
     """将文本型 PDF 提取为 Draft，并保存到材料库。"""
     paragraphs: list[ReadingMaterialDraftParagraph] = []
     for page_number, page_text in pdf_page_texts(str(file_path)):
@@ -93,7 +93,7 @@ def import_url(
     url: str,
     library: MaterialLibrary,
     mode: str = 'auto',
-) -> MaterialDetail:
+) -> MaterialImportResult:
     """将网页 URL 抽取为 Draft，并保存到材料库。"""
     _validate_url(url)
     normalized_mode = mode.lower()

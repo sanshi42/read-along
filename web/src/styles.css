@@ -254,6 +254,12 @@ h1 {
   color: #9b3f32;
 }
 
+.import-feedback-link {
+  color: #7b512d;
+  font-weight: 700;
+  text-underline-offset: 3px;
+}
+
 .state-panel {
   display: grid;
   justify-items: start;

@@ -19,8 +19,10 @@ from read_along.ids import (
 )
 from read_along.models import (
     AudioStatus,
+    ImportOutcome,
     Material,
     MaterialDetail,
+    MaterialImportResult,
     MaterialSummary,
     ParagraphDetail,
     ReadingMaterialDraft,
@@ -105,7 +107,7 @@ class MaterialLibrary:
         self.storage_paths = storage_paths
         self.repository = Repository(storage_paths.database)
 
-    def save(self, draft: ReadingMaterialDraft) -> MaterialDetail:
+    def save(self, draft: ReadingMaterialDraft) -> MaterialImportResult:
         """原子保存阅读材料 Draft，重复导入时返回现有材料。"""
         self._validate_draft(draft)
         content_hash = _content_hash(draft)
@@ -132,9 +134,12 @@ class MaterialLibrary:
                     if existing_material is None:
                         raise MaterialLibraryError('来源身份关联的阅读材料不存在')
                     if existing_material.content_hash != content_hash:
-                        raise SourceChangedError('相同来源的结构化正文已发生变化')
+                        raise SourceChangedError('此来源的正文与已保存版本不同。为避免覆盖现有阅读材料，本次未导入。')
                     connection.rollback()
-                    return self._detail(connection, existing_material)
+                    return MaterialImportResult(
+                        outcome=ImportOutcome.REUSED_SOURCE,
+                        material=self._detail(connection, existing_material),
+                    )
 
                 existing_material = self.repository.get_material_by_content_hash(
                     connection,
@@ -158,7 +163,10 @@ class MaterialLibrary:
                         updated_at=now,
                     )
                     connection.commit()
-                    return self.get(existing_material.id)
+                    return MaterialImportResult(
+                        outcome=ImportOutcome.REUSED_CONTENT,
+                        material=self.get(existing_material.id),
+                    )
 
                 if draft.source_file is not None:
                     temp_path, final_path = self._copy_source_file(
@@ -201,7 +209,10 @@ class MaterialLibrary:
                 self._cleanup_failed_save(temp_path, final_path)
                 raise MaterialLibraryError('保存阅读材料失败') from exc
 
-        return self.get(material_id)
+        return MaterialImportResult(
+            outcome=ImportOutcome.CREATED,
+            material=self.get(material_id),
+        )
 
     def list_shelf(self) -> list[MaterialSummary]:
         """按最近活动时间返回书架材料摘要。"""

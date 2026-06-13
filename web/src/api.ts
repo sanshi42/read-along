@@ -1,5 +1,6 @@
 export type SourceType = "url" | "pdf";
 export type UrlImportMode = "auto" | "chrome";
+export type ImportOutcome = "created" | "reused_source" | "reused_content";
 
 export interface MaterialSource {
   id: string;
@@ -33,6 +34,11 @@ export interface MaterialDetail extends MaterialSummary {
   }>;
 }
 
+export interface MaterialImportResult {
+  outcome: ImportOutcome;
+  material: MaterialDetail;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, options);
   if (!response.ok) {
@@ -58,8 +64,8 @@ export function getMaterial(materialId: string): Promise<MaterialDetail> {
   return request<MaterialDetail>(`/api/materials/${encodeURIComponent(materialId)}`);
 }
 
-export function importUrl(url: string, mode: UrlImportMode = "auto"): Promise<MaterialDetail> {
-  return request<MaterialDetail>("/api/import/url", {
+export function importUrl(url: string, mode: UrlImportMode = "auto"): Promise<MaterialImportResult> {
+  return request<MaterialImportResult>("/api/import/url", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

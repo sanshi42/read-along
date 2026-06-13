@@ -1,7 +1,14 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { importUrl, listMaterials, type MaterialSummary, type UrlImportMode } from "../api";
+import {
+  importUrl,
+  listMaterials,
+  type ImportOutcome,
+  type MaterialImportResult,
+  type MaterialSummary,
+  type UrlImportMode,
+} from "../api";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   month: "short",
@@ -12,6 +19,17 @@ function sourceLabel(material: MaterialSummary) {
   return material.primary_source.source_type === "pdf" ? "PDF" : "网页";
 }
 
+function importMessage(outcome: ImportOutcome, title: string) {
+  switch (outcome) {
+    case "created":
+      return `已导入：${title}`;
+    case "reused_source":
+      return `已存在此来源，已复用阅读材料：${title}`;
+    case "reused_content":
+      return `正文已存在，已关联新来源并复用阅读材料：${title}`;
+  }
+}
+
 export function ShelfPage() {
   const [materials, setMaterials] = useState<MaterialSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -19,7 +37,7 @@ export function ShelfPage() {
   const [importMode, setImportMode] = useState<UrlImportMode>("auto");
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<MaterialImportResult | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -44,23 +62,27 @@ export function ShelfPage() {
     const nextUrl = url.trim();
     if (!nextUrl) {
       setImportError("请输入网页 URL");
-      setImportMessage(null);
+      setImportResult(null);
       return;
     }
 
     setImporting(true);
     setImportError(null);
-    setImportMessage(null);
+    setImportResult(null);
     try {
-      const imported = await importUrl(nextUrl, importMode);
+      const result = await importUrl(nextUrl, importMode);
+      const imported = result.material;
       setMaterials((current) => {
         if (!current) {
           return [imported];
         }
+        if (result.outcome === "reused_source") {
+          return current.map((item) => (item.id === imported.id ? imported : item));
+        }
         return [imported, ...current.filter((item) => item.id !== imported.id)];
       });
       setUrl("");
-      setImportMessage(`已导入：${imported.title}`);
+      setImportResult(result);
     } catch (reason: unknown) {
       setImportError(reason instanceof Error ? reason.message : "网页导入失败");
     } finally {
@@ -135,9 +157,12 @@ export function ShelfPage() {
               {importError}
             </p>
           ) : null}
-          {importMessage ? (
+          {importResult ? (
             <p className="import-feedback" aria-live="polite">
-              {importMessage}
+              {importMessage(importResult.outcome, importResult.material.title)}{" "}
+              <Link className="import-feedback-link" to={`/materials/${importResult.material.id}`}>
+                打开阅读页
+              </Link>
             </p>
           ) : null}
         </form>

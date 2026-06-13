@@ -36,14 +36,14 @@
 - Goal: 得到单篇导入经过真实验收，重复导入时用户获得清晰反馈。
 - Boundary: 只处理单篇导入验收和重复导入反馈，不增加批量抓取或导入任务进度。
 - Verification: 使用公开网页、文本型 PDF 和已登录 Chrome 中的得到单篇页面完成手动验收；运行 `make check`。
-- Status: Active。
+- Status: Done。
 
 ### M3: 生成并缓存句子音频
 
 - Goal: 使用 macOS `say` 为句子生成并复用本地音频。
 - Boundary: TTS 适配器、句子音频缓存和音频访问 API；单句失败不阻断其他句子。
 - Verification: 自动测试覆盖生成、缓存复用和失败路径；真实 macOS 环境可生成并播放单句音频。
-- Status: Planned。
+- Status: Active。
 
 ### M4: 完成朗读、高亮和断点续读
 

@@ -10,7 +10,7 @@ from read_along.config import AppConfig
 from read_along.db import initialize_database
 from read_along.importers import UrlImportError, WebPageContent, _extract_main_text, import_pdf, import_url
 from read_along.material_library import MaterialLibrary
-from read_along.models import MaterialDetail, SourceType
+from read_along.models import ImportOutcome, MaterialImportResult, SourceType
 from read_along.storage import StoragePaths
 
 
@@ -44,13 +44,14 @@ class TestImportPdf:
             library=library,
         )
 
-        assert isinstance(result, MaterialDetail)
-        assert result.primary_source.source_type == SourceType.PDF
-        assert result.primary_source.source_uri == 'test.pdf'
-        assert result.paragraphs
-        assert len(result.paragraphs) == 1
+        assert isinstance(result, MaterialImportResult)
+        assert result.outcome is ImportOutcome.CREATED
+        assert result.material.primary_source.source_type == SourceType.PDF
+        assert result.material.primary_source.source_uri == 'test.pdf'
+        assert result.material.paragraphs
+        assert len(result.material.paragraphs) == 1
 
-        para = result.paragraphs[0]
+        para = result.material.paragraphs[0]
         assert para.index == 1
         assert para.source_label == '第 1 页，第 1 段'
         assert para.sentences
@@ -79,11 +80,11 @@ class TestImportPdf:
             library=library,
         )
 
-        assert len(result.paragraphs) == 2
-        assert result.paragraphs[0].source_label == '第 1 页，第 1 段'
-        assert result.paragraphs[1].source_label == '第 2 页，第 1 段'
-        assert 'Page one.' in result.paragraphs[0].text
-        assert 'Page two.' in result.paragraphs[1].text
+        assert len(result.material.paragraphs) == 2
+        assert result.material.paragraphs[0].source_label == '第 1 页，第 1 段'
+        assert result.material.paragraphs[1].source_label == '第 2 页，第 1 段'
+        assert 'Page one.' in result.material.paragraphs[0].text
+        assert 'Page two.' in result.material.paragraphs[1].text
 
     def test_material_persists_in_material_library(self, tmp_path: Path) -> None:
         _create_text_pdf(tmp_path, 'Hello PDF.')
@@ -95,7 +96,7 @@ class TestImportPdf:
             library=library,
         )
 
-        refreshed = MaterialLibrary(library.storage_paths).get(result.id)
+        refreshed = MaterialLibrary(library.storage_paths).get(result.material.id)
         assert refreshed.title == 'test.pdf'
         assert refreshed.primary_source.source_type == SourceType.PDF
         assert len(refreshed.paragraphs) == 1
@@ -111,8 +112,8 @@ class TestImportPdf:
             library=library,
         )
 
-        assert result.primary_source.source_path is not None
-        expected_copy = Path(result.primary_source.source_path)
+        assert result.material.primary_source.source_path is not None
+        expected_copy = Path(result.material.primary_source.source_path)
         assert expected_copy.is_file()
         assert expected_copy.stat().st_size > 0
 
@@ -146,7 +147,7 @@ class TestImportPdf:
             library=library2,
         )
 
-        assert result1.id == result2.id
+        assert result1.material.id == result2.material.id
 
     def test_sentences_extracted_in_order(self, tmp_path: Path) -> None:
         """页面上的多个文本块应按顺序生成句子。"""
@@ -167,7 +168,7 @@ class TestImportPdf:
         )
 
         # 句子应保持原有顺序
-        all_sentences = [s.text for p in result.paragraphs for s in p.sentences]
+        all_sentences = [s.text for p in result.material.paragraphs for s in p.sentences]
         assert 'First sentence.' in all_sentences
         assert 'Second sentence.' in all_sentences
 
@@ -191,7 +192,7 @@ class TestImportPdf:
         )
 
         # 应已过滤“上一篇”
-        all_text = ' '.join(s.text for p in result.paragraphs for s in p.sentences)
+        all_text = ' '.join(s.text for p in result.material.paragraphs for s in p.sentences)
         assert '上一篇' not in all_text
         assert 'Real content.' in all_text
         assert 'More content.' in all_text
@@ -257,12 +258,15 @@ class TestImportUrl:
             library=library,
         )
 
-        assert result.primary_source.source_type == SourceType.URL
-        assert result.primary_source.source_uri == 'https://example.com/article'
-        assert result.title == '示例网页'
-        assert len(result.paragraphs) == 2
-        assert result.paragraphs[0].source_label == '网页正文，第 1 段'
-        all_text = ' '.join(sentence.text for paragraph in result.paragraphs for sentence in paragraph.sentences)
+        assert result.outcome is ImportOutcome.CREATED
+        assert result.material.primary_source.source_type == SourceType.URL
+        assert result.material.primary_source.source_uri == 'https://example.com/article'
+        assert result.material.title == '示例网页'
+        assert len(result.material.paragraphs) == 2
+        assert result.material.paragraphs[0].source_label == '网页正文，第 1 段'
+        all_text = ' '.join(
+            sentence.text for paragraph in result.material.paragraphs for sentence in paragraph.sentences
+        )
         assert '分享' not in all_text
         assert '最新评论' not in all_text
         assert '第一段正文' in all_text
@@ -336,8 +340,10 @@ class TestImportUrl:
             library=library,
         )
 
-        all_text = ' '.join(sentence.text for paragraph in result.paragraphs for sentence in paragraph.sentences)
-        assert result.primary_source.source_uri == target_url
+        all_text = ' '.join(
+            sentence.text for paragraph in result.material.paragraphs for sentence in paragraph.sentences
+        )
+        assert result.material.primary_source.source_uri == target_url
         assert '课程目录' not in all_text
         assert '下一讲' not in all_text
         assert '写留言' not in all_text
@@ -397,7 +403,7 @@ class TestImportUrl:
         )
 
         assert seen_calls == [(target_url, ('.article-body',), ('.article-title',))]
-        assert result.primary_source.source_uri == target_url
+        assert result.material.primary_source.source_uri == target_url
 
     def test_chrome_import_opens_requested_generic_url_without_source_selector(
         self,
@@ -432,8 +438,8 @@ class TestImportUrl:
         )
 
         assert seen_calls == [(target_url, (), ())]
-        assert result.title == '普通网页'
-        assert result.paragraphs[0].sentences[0].text == '第一段正文解释核心概念。'
+        assert result.material.title == '普通网页'
+        assert result.material.paragraphs[0].sentences[0].text == '第一段正文解释核心概念。'
 
     def test_chrome_import_wraps_browser_errors(
         self,

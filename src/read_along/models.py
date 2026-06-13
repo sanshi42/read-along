@@ -31,6 +31,14 @@ class ImportJobStatus(StrEnum):
     FAILED = 'failed'
 
 
+class ImportOutcome(StrEnum):
+    """阅读材料导入结果。"""
+
+    CREATED = 'created'
+    REUSED_SOURCE = 'reused_source'
+    REUSED_CONTENT = 'reused_content'
+
+
 class DataModel(BaseModel):
     """项目 DTO 的 Pydantic 基类。"""
 
@@ -112,6 +120,13 @@ class MaterialDetail(Material):
     sources: list[MaterialSource]
     progress: ReadingProgress | None
     paragraphs: list[ParagraphDetail]
+
+
+class MaterialImportResult(DataModel):
+    """包含结果原因和阅读材料的导入结果。"""
+
+    outcome: ImportOutcome
+    material: MaterialDetail
 
 
 class ReadingMaterialDraftParagraph(DataModel):

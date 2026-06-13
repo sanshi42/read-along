@@ -9,7 +9,7 @@ from read_along.config import AppConfig
 from read_along.db import initialize_database
 from read_along.importers import UrlImportError
 from read_along.material_library import MaterialLibrary
-from read_along.models import MaterialDetail, ReadingMaterialDraft, ReadingMaterialDraftParagraph, SourceType
+from read_along.models import MaterialImportResult, ReadingMaterialDraft, ReadingMaterialDraftParagraph, SourceType
 from read_along.storage import StoragePaths
 
 
@@ -44,7 +44,7 @@ def test_material_list_returns_saved_material(tmp_path: Path) -> None:
     response = client.get('/api/materials')
 
     assert response.status_code == 200
-    assert response.json()[0]['id'] == material.id
+    assert response.json()[0]['id'] == material.material.id
     assert response.json()[0]['title'] == '示例文章'
     assert response.json()[0]['primary_source']['source_uri'] == 'https://example.com/article'
 
@@ -56,10 +56,10 @@ def test_material_detail_returns_saved_material(tmp_path: Path) -> None:
     app.dependency_overrides[get_material_library] = lambda: library
     client = TestClient(app)
 
-    response = client.get(f'/api/materials/{material.id}')
+    response = client.get(f'/api/materials/{material.material.id}')
 
     assert response.status_code == 200
-    assert response.json()['id'] == material.id
+    assert response.json()['id'] == material.material.id
     assert response.json()['paragraphs'][0]['sentences'][0]['text'] == '第一句。'
 
 
@@ -109,7 +109,8 @@ def test_pdf_import_uses_material_library(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 200
-    material_id = response.json()['id']
+    assert response.json()['outcome'] == 'created'
+    material_id = response.json()['material']['id']
     assert library.get(material_id).primary_source.source_uri == 'example.pdf'
 
 
@@ -127,7 +128,7 @@ def test_url_import_uses_material_library(
         url: str,
         mode: str,
         library: MaterialLibrary,
-    ) -> MaterialDetail:
+    ) -> MaterialImportResult:
         assert url == 'https://example.com/article'
         assert mode == 'auto'
         return _save_url_material(library)
@@ -140,9 +141,72 @@ def test_url_import_uses_material_library(
     )
 
     assert response.status_code == 200
-    assert response.json()['title'] == '示例文章'
-    assert response.json()['primary_source']['source_type'] == 'url'
-    assert response.json()['paragraphs'][0]['sentences'][0]['text'] == '第一句。'
+    assert response.json()['outcome'] == 'created'
+    assert response.json()['material']['title'] == '示例文章'
+    assert response.json()['material']['primary_source']['source_type'] == 'url'
+    assert response.json()['material']['paragraphs'][0]['sentences'][0]['text'] == '第一句。'
+
+
+def test_url_import_reports_reused_source_and_reused_content(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = _make_library(tmp_path)
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+
+    def fake_import_url(
+        *,
+        url: str,
+        mode: str,
+        library: MaterialLibrary,
+    ) -> MaterialImportResult:
+        return _save_url_material(library, url=url)
+
+    monkeypatch.setattr('read_along.api.import_url', fake_import_url)
+
+    first = client.post('/api/import/url', json={'url': 'https://example.com/article'})
+    same_source = client.post('/api/import/url', json={'url': 'https://example.com/article'})
+    same_content = client.post('/api/import/url', json={'url': 'https://example.com/copy'})
+
+    assert first.status_code == 200
+    assert first.json()['outcome'] == 'created'
+    assert same_source.status_code == 200
+    assert same_source.json()['outcome'] == 'reused_source'
+    assert same_content.status_code == 200
+    assert same_content.json()['outcome'] == 'reused_content'
+    assert len(same_content.json()['material']['sources']) == 2
+
+
+def test_url_import_reports_source_change_without_overwriting_material(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = _make_library(tmp_path)
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+    sentences = iter((['第一句。'], ['正文变化。']))
+
+    def fake_import_url(
+        *,
+        url: str,
+        mode: str,
+        library: MaterialLibrary,
+    ) -> MaterialImportResult:
+        return _save_url_material(library, url=url, sentences=next(sentences))
+
+    monkeypatch.setattr('read_along.api.import_url', fake_import_url)
+
+    first = client.post('/api/import/url', json={'url': 'https://example.com/article'})
+    changed = client.post('/api/import/url', json={'url': 'https://example.com/article'})
+
+    assert first.status_code == 200
+    assert changed.status_code == 409
+    assert changed.json() == {'detail': '此来源的正文与已保存版本不同。为避免覆盖现有阅读材料，本次未导入。'}
+    material_id = first.json()['material']['id']
+    assert library.get(material_id).paragraphs[0].sentences[0].text == '第一句。'
 
 
 def test_url_import_returns_chinese_error(
@@ -159,7 +223,7 @@ def test_url_import_returns_chinese_error(
         url: str,
         mode: str,
         library: MaterialLibrary,
-    ) -> MaterialDetail:
+    ) -> MaterialImportResult:
         raise UrlImportError('网页正文为空或无法抽取。')
 
     monkeypatch.setattr('read_along.api.import_url', fail_import_url)
@@ -179,16 +243,22 @@ def _make_library(tmp_path: Path) -> MaterialLibrary:
     return MaterialLibrary(paths)
 
 
-def _save_url_material(library: MaterialLibrary) -> MaterialDetail:
+def _save_url_material(
+    library: MaterialLibrary,
+    *,
+    url: str = 'https://example.com/article',
+    sentences: list[str] | None = None,
+) -> MaterialImportResult:
+    sentences = sentences or ['第一句。', '第二句。']
     return library.save(
         ReadingMaterialDraft(
             source_type=SourceType.URL,
-            source_uri='https://example.com/article',
+            source_uri=url,
             title='示例文章',
             paragraphs=[
                 ReadingMaterialDraftParagraph(
-                    text='第一句。 第二句。',
-                    sentences=['第一句。', '第二句。'],
+                    text=' '.join(sentences),
+                    sentences=sentences,
                 ),
             ],
         )
