@@ -1,6 +1,6 @@
 # Read Along MVP 技术方案
 
-最后更新：2026-06-06
+最后更新：2026-06-13
 
 ## 目标
 
@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | 后端 | FastAPI + Uvicorn | Python 生态成熟，适合本地 API 和文件服务。 |
 | 前端 | Vite + React + TypeScript | 交互复杂度适中，适合阅读器状态和播放器控制。 |
-| 存储 | SQLite + SQLModel + Alembic + 本地文件目录 | 单用户本机应用不需要数据库服务；SQLModel 统一描述表模型，Alembic 管理 schema 演进。 |
+| 存储 | SQLite + SQLModel/Alembic 技术基线 + 本地文件目录 | 当前生产使用手写六表 schema；SQLModel/Alembic 保留为独立技术基线，不自动迁移现有数据库。 |
 | PDF | PyMuPDF | 提取文本型 PDF 稳定，先不做 OCR。 |
 | 网页 | Scrapling + Chrome 会话桥接 | 公开网页直接抓取；登录态页面通过用户授权的浏览器会话读取。 |
 | TTS | macOS `say` 适配器 | 本机自带，无网络依赖；后续可替换为本地神经 TTS。 |
@@ -29,7 +29,7 @@ src/read_along/
   api.py                # FastAPI app 和路由
   cli.py                # 顶层 read-along CLI
   config.py             # 本地数据目录、环境配置
-  db.py                 # SQLModel Engine、Session 和 SQLite 连接配置
+  db.py                 # 当前六表 schema、SQLite 连接和启动校验
   db_models.py          # SQLModel 数据库表模型和关系
   models.py             # 领域模型和 API DTO
   material_library.py   # 阅读材料完整持久化生命周期
@@ -98,10 +98,10 @@ READ_ALONG_HOME=/path/to/data
 - 禁止通过 ORM relationship cascade 保存整篇阅读材料；Repository 继续显式插入各数据库实体。
 - 完整阅读材料通过显式 SQLModel 查询批量读取材料、来源、段落、句子和进度，并在 `Session` 关闭前组装为领域/API DTO。
 - 查询设计必须避免逐段或逐句懒加载造成 N+1 查询；数据库实体不跨越 `Session` 生命周期。
-- Alembic 是数据库 schema 创建和演进的唯一机制。应用代码不再使用 `CREATE TABLE IF NOT EXISTS` 或启动时临时修补 schema。
+- 当前生产启动继续使用 `db.py` 中的手写六表 `SCHEMA` 创建新数据库；SQLModel metadata 与 Alembic baseline 保留为独立技术基线，不自动切换生产数据库。
 - SQLModel 无法完整表达或 Alembic 无法可靠自动生成的 SQLite 约束，例如复合外键、部分唯一索引和表重建迁移，必须在 Alembic revision 中显式定义并测试。
 - 业务运行时代码禁止裸 SQL；Repository 和材料库业务查询必须使用 SQLModel 或 SQLAlchemy 表达式。
-- 裸 SQL 仅允许用于历史 schema 接管、Alembic revision、SQLite PRAGMA、`BEGIN IMMEDIATE` 和 SQLAlchemy 无法表达的 schema 校验。
+- 裸 SQL 仅允许用于当前生产 schema 创建与校验、Alembic revision、SQLite PRAGMA、`BEGIN IMMEDIATE` 和 SQLAlchemy 无法表达的 schema 校验。
 - 允许的裸 SQL 必须集中在数据库基础设施模块，禁止字符串插值业务数据，并通过针对性测试验证；代码需说明无法使用 SQLModel 或 SQLAlchemy 表达式的原因。
 
 ### 数据库不变量
@@ -137,20 +137,19 @@ READ_ALONG_HOME=/path/to/data
 
 ### 数据库测试路径
 
-- 所有集成测试和材料库测试的 SQLite 文件必须通过与生产相同的迁移编排器和 `alembic upgrade head` 创建。
-- 测试禁止使用 `SQLModel.metadata.create_all()`，避免形成绕过迁移的第二套 schema 创建路径。
+- 所有生产路径集成测试和材料库测试的 SQLite 文件必须通过 `initialize_database()` 创建。
+- SQLModel 与 Alembic baseline 测试独立验证目标 metadata 和 revision，不作为当前生产启动路径。
 - Repository 测试优先使用真实文件 SQLite，不使用与 WAL、锁、连接事件和迁移行为不同的内存数据库。
-- 每种已知历史 schema 使用固定 fixture 验证无损接管；测试覆盖迁移幂等性、备份、失败拒绝启动和未知 schema 诊断。
+- 测试覆盖新数据库创建、当前六表重复初始化，以及旧五表、半迁移、空文件和结构变更数据库拒绝启动。
 - 增加元数据与迁移后真实 schema 的一致性测试，验证表、列、索引、外键和约束没有漂移。
 
 ### 时间字段
 
 - 数据库表模型使用 `datetime` 表示 `created_at`、`updated_at` 等时间字段，不再让领域代码传递或解析 ISO 文本。
 - 应用内时间统一为带 UTC 时区的 `datetime`；API 继续序列化为 ISO 8601，不改变接口表现。
-- 历史接管编排器必须严格解析现有 ISO 时间文本并保留时间点；遇到无效历史时间时迁移失败，不静默替换。
 - SQLite 不原生保存时区，不能只依赖 `DateTime(timezone=True)` 保证读回 UTC 时区。
 - 项目提供 SQLAlchemy `TypeDecorator` 类型 `UTCDateTime`：拒绝无时区 `datetime`，写入前转换为 UTC，读出后恢复 `timezone.utc`。
-- SQLModel 时间字段统一使用 `UTCDateTime`，并通过跨 Session 重读、排序和旧 ISO 时间迁移测试验证。
+- SQLModel 时间字段统一使用 `UTCDateTime`，并通过跨 Session 重读和排序测试验证。
 
 ### 身份字段
 
@@ -165,49 +164,25 @@ READ_ALONG_HOME=/path/to/data
 - Python 领域模型和数据库实体使用现有 `StrEnum` 表达来源类型、音频状态和导入任务状态。
 - SQLite 使用字符串列和显式 `CHECK` 约束，不使用 SQLAlchemy 原生 `Enum` 类型。
 - 新增或删除允许值必须通过 Alembic revision 修改对应 `CHECK` 约束，不能仅修改 Python 枚举。
-- 历史接管编排器保留当前字符串值，并在迁移前验证所有历史值都属于允许集合。
 
 ### 导入任务表范围
 
-- `import_jobs` 纳入 SQLModel baseline schema 和历史数据库无损接管。
+- `import_jobs` 纳入 SQLModel baseline schema。
 - 定义 `ImportJobRow`、状态字段和数据库约束，并保留 `material_id ON DELETE SET NULL`。
 - 本次数据库重构不新增导入任务的业务 Repository、材料库 Interface 或 API。
 - 导入任务创建、状态更新、查询和错误展示仍属于后续独立 backlog 任务。
 
-### 接管现有本地数据库
+### 现有本地数据库兼容边界
 
-采用 SQLModel 和 Alembic 时必须无损保留现有本地数据库，不允许通过清空并重建数据库完成切换。
+当前生产路径只接受 `db.py` 中手写 `SCHEMA` 对应的真实六表结构，不再自动接管或修复历史数据库。
 
-- 历史接管编排器负责识别并接管来源字段仍内嵌在 `materials` 的早期 schema、当前六表 schema，以及已知的半迁移状态。
-- 每个已知历史 schema 使用明确指纹识别，指纹包含表、列、索引、外键和 Alembic revision；空数据库按全新数据库处理。
-- 历史接管编排器只处理明确支持的历史状态，不进行猜测性修复。
-- 遇到未知列组合、缺失必要表、非法枚举值、无效时间或悬空外键时，创建备份、输出具体诊断并拒绝迁移和启动。
-- 提供独立数据库诊断命令，但启动流程不得自动删除、忽略或替换异常数据。
-- 启动迁移编排器负责历史库接管：识别已知 schema、迁移为 SQLModel baseline schema、校验数据与约束，然后写入 baseline Alembic revision。
-- Alembic revision 链只描述 baseline 及其后的正常 schema 演进，不混入多种历史 schema 的条件分支。
-- 接管完成后，所有数据库统一执行 `alembic upgrade head`；后续不再通过接管编排器修改已纳入 Alembic 管理的 schema。
-- 迁移必须保留阅读材料、来源身份、结构化正文、阅读进度和导入任务。
-- 应用启动时自动执行 `alembic upgrade head`，不要求本地用户手动维护数据库版本。
-- 存在待执行迁移时，先创建数据库文件备份；迁移失败时保留原数据库和备份，并阻止应用使用未完成迁移的数据库启动。
-- 备份放在 `backups/`，文件名包含迁移前 revision 和 UTC 时间；使用 SQLite backup API 创建一致性快照，不直接复制可能处于 WAL 状态的数据库文件。
-- 仅在确实存在待执行 migration 时创建备份；成功迁移前备份自动保留最近 3 个，失败迁移对应的备份永久保留且不参与自动清理。
-- schema migration 不修改上传源文件和音频缓存，因此迁移备份不包含这些文件。
-- 新数据库同样通过 Alembic 从空库迁移到最新 revision，不使用 `SQLModel.metadata.create_all()`。
-- Alembic 接管成功后，删除 `db.py` 中现有的手写 schema 创建、旧表复制和半迁移修复逻辑。
-- 后续 schema 变化只通过新的 Alembic revision 进行，不再增加启动时条件修复分支。
-
-已知 schema 状态及处理方式：
-
-| 状态 | 识别要点 | 处理方式 |
-| --- | --- | --- |
-| 空数据库 | 不存在业务表和 `alembic_version` | 直接执行 `alembic upgrade head`，不创建备份。 |
-| 早期五表 schema | 存在 `materials`、`paragraphs`、`sentences`、`reading_progress`、`import_jobs`；`materials` 仍包含来源和状态字段；不存在 `material_sources` 和 `alembic_version` | 严格校验全部表、索引、外键和数据后，转换为 baseline schema 并写入 baseline revision。 |
-| 当前六表 schema | 存在 `material_sources`；`materials` 已移除早期来源和状态字段；不存在 `alembic_version` | 严格校验 schema 和数据后直接写入 baseline revision，不重写业务数据。 |
-| 已知半迁移 schema | 主体已是当前六表 schema，但 `material_sources.material_id` 外键错误引用 `materials_legacy` | 重建 `material_sources`、校验数据与约束后写入 baseline revision。 |
-| Alembic 管理的数据库 | 存在受支持的 `alembic_version` revision，且 schema 指纹匹配该 revision | 创建必要备份后执行待运行的正常 Alembic revisions。 |
-| 未知或损坏状态 | 任一必要表、列、索引、外键、revision 或数据校验不匹配已知状态 | 创建并永久保留失败备份，输出具体诊断并拒绝启动。 |
-
-实现中的固定 fixture 必须完整描述每个已知状态的表、列、索引、外键和代表性数据；任何只匹配部分特征的数据库都按未知状态处理。
+- 数据库文件不存在时，通过当前手写 `SCHEMA` 创建新数据库。
+- 数据库文件已存在时，比较 `sqlite_master` 中的表、索引和标准化建表 SQL。
+- 只有精确匹配当前真实六表结构的数据库可以继续启动。
+- 已存在的空数据库、早期五表、已知半迁移、Alembic baseline 和其他不匹配结构均保持原样并拒绝启动。
+- 应用不提供历史 schema 诊断命令，不创建迁移备份，不执行猜测性修复。
+- 启动失败信息明确提示用户移走或删除不兼容数据库文件。
+- SQLModel 与 Alembic baseline 不自动接管生产数据库；未来若切换生产 schema 路径，必须通过独立决策重新明确兼容边界。
 
 ## 数据模型
 
@@ -556,7 +531,7 @@ MVP 不引入：
 ### 后端单元测试
 
 - SQLModel metadata 与 Alembic baseline schema 一致性。
-- 新数据库创建、已知历史数据库无损接管、备份和迁移失败拒绝启动。
+- 新数据库创建、当前真实六表重复初始化和不兼容数据库拒绝启动。
 - SQLModel Session、SQLite 外键级联、写锁等待和并发保存。
 - 段落/句子切分。
 - 重复 URL 去重。
@@ -603,15 +578,11 @@ MVP 不引入：
 
 ## 数据库重构实施拆分
 
-数据库重构按以下顺序拆成独立小任务。每个任务完成后现有 API 和材料库行为都必须保持可用，不允许在中间状态要求清空本地数据库。
+数据库重构按以下顺序拆成独立小任务。每个任务完成后现有 API 和材料库行为都必须保持可用。
 
 1. **SQLModel 与 Alembic baseline**：添加依赖、`UTCDateTime`、SQLModel 表模型、Alembic 配置和 baseline revision；验证空数据库经 Alembic 创建后的真实 schema 与 metadata 一致。生产启动和 Repository 暂不切换。
-2. **历史 schema 诊断**：实现只读 schema 指纹识别、数据校验和独立诊断命令；使用固定 fixture 覆盖空数据库、早期五表、当前六表、已知半迁移和未知状态。不得修改被诊断数据库。
-3. **历史数据库接管与备份**：实现 SQLite backup API、保留策略和历史接管编排器；将全部已知状态无损接管到 baseline，未知或损坏状态保留备份并拒绝迁移。生产启动暂不切换。
-4. **启动迁移切换**：应用启动改用历史接管编排器和 `alembic upgrade head`；新库和旧库统一走迁移路径，随后删除 `db.py` 中手写 `SCHEMA`、旧表复制和半迁移修复逻辑。Repository 暂时保持现有兼容读写。
-5. **SQLModel Repository 与事务切换**：Repository 改用 SQLModel `Session` 和表达式，材料库拥有 Session、`BEGIN IMMEDIATE`、提交和回滚；移除业务运行时裸 SQL，并补齐级联删除、跨 Session UTC 时间、并发保存和完整材料批量读取测试。
-
-第一项是推荐的下一个最小任务；它只建立可验证的目标 schema，不接触现有数据库或切换生产运行路径。
+2. **精简生产 schema 兼容边界**：删除历史自动修复和独立诊断方向；新库使用当前手写六表 schema，现有非当前六表数据库直接拒绝启动。
+3. **SQLModel Repository 与事务评估**：若继续切换 Repository，必须先独立决定生产 schema 创建路径和当前六表数据处理方式；不得默认引入自动接管。
 
 ## 关键取舍
 

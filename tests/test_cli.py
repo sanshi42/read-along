@@ -3,6 +3,7 @@ from typer.testing import CliRunner
 
 from read_along import cli
 from read_along.cli import app
+from read_along.db import DatabaseSchemaError
 
 
 class FakeUvicorn:
@@ -25,6 +26,7 @@ def test_root_cli_registers_serve_command() -> None:
 
     assert result.exit_code == 0
     assert 'serve' in result.output
+    assert 'diagnose-db' not in result.output
 
 
 def test_serve_uses_default_local_binding(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -62,3 +64,21 @@ def test_serve_reports_bind_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 1
     assert 'Read Along 服务启动失败' in result.output
     assert '无法绑定服务到 127.0.0.1:8765' in result.output
+
+
+def test_serve_reports_database_schema_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_uvicorn = FakeUvicorn()
+    monkeypatch.setattr(cli, '_ensure_bind_available', lambda host, port: None)
+    monkeypatch.setattr(cli, '_load_uvicorn', lambda: fake_uvicorn)
+
+    def fail_init_app_state():
+        raise DatabaseSchemaError('不支持当前数据库结构。')
+
+    monkeypatch.setattr('read_along.api.init_app_state', fail_init_app_state)
+
+    result = CliRunner().invoke(app, ['serve'])
+
+    assert result.exit_code == 1
+    assert 'Read Along 服务启动失败' in result.output
+    assert '不支持当前数据库结构' in result.output
+    assert fake_uvicorn.calls == []

@@ -64,14 +64,15 @@ def serve(
     try:
         _ensure_bind_available(host, port)
         uvicorn = _load_uvicorn()
+
+        # 启动服务前初始化应用状态（存储路径、数据库和 repository）
+        from read_along.api import init_app_state
+
+        app_state = init_app_state()
     except RuntimeError as exc:
         console.print(f'[red]Read Along 服务启动失败：[/red] {exc}')
         raise typer.Exit(code=1) from exc
 
-    # 启动服务前初始化应用状态（存储路径、数据库和 repository）
-    from read_along.api import init_app_state
-
-    app_state = init_app_state()
     console.print(f'[dim]数据目录：{app_state.storage_paths.home}[/dim]')
 
     console.print(f'[cyan]正在启动 Read Along API：[/cyan] http://{host}:{port}')
