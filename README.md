@@ -2,7 +2,7 @@
 
 Read Along 是一个 macOS 优先的个人本地 Web App。它把单篇网页或文本型 PDF 转成可边听边读的材料，并提供句子级朗读、同步高亮和断点续读。
 
-项目当前处于 MVP 开发阶段。已经完成 FastAPI 服务骨架，并保留了用于读取用户已授权页面可见正文的 Chrome 会话桥接能力。
+项目当前处于 MVP 开发阶段。导入、材料库、书架和阅读页基础能力已经可用，当前正在完成得到单篇导入验收，之后进入本地朗读闭环。
 
 ## 产品边界
 
@@ -49,4 +49,4 @@ uv run pre-commit install
 npm run build --prefix web
 ```
 
-产品范围、技术方案和迭代计划见 `docs/`；当前开发进度见 `tasks/progress.md`。
+MVP 目标、计划和当前任务见 `docs/read-along-mvp/`。
