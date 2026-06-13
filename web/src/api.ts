@@ -65,6 +65,10 @@ export function getMaterial(materialId: string): Promise<MaterialDetail> {
   return request<MaterialDetail>(`/api/materials/${encodeURIComponent(materialId)}`);
 }
 
+export function sentenceAudioUrl(materialId: string, sentenceId: string): string {
+  return `/api/materials/${encodeURIComponent(materialId)}/sentences/${encodeURIComponent(sentenceId)}/audio`;
+}
+
 export function importUrl(url: string, mode: UrlImportMode = "auto"): Promise<MaterialImportResult> {
   return request<MaterialImportResult>("/api/import/url", {
     method: "POST",
