@@ -5,6 +5,8 @@ import urllib.parse
 from read_along.browser import GENERIC_NOISE_LINE_PATTERNS, clean_browser_text
 
 DEDAO_HOSTS = {'dedao.cn', 'www.dedao.cn'}
+CONTENT_SELECTORS = ('.article-body',)
+TITLE_SELECTORS = ('.article-title',)
 
 DEDAO_NOISE_LINE_PATTERNS = [
     r'^写留言$',

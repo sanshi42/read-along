@@ -5,7 +5,6 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-import read_along.importers as importers_module
 from read_along.browser import BrowserExtractionError, BrowserPageText
 from read_along.config import AppConfig
 from read_along.db import initialize_database
@@ -365,129 +364,75 @@ class TestImportUrl:
                 library=library,
             )
 
-    def test_chrome_import_retries_dedao_id_url_without_query(
+    def test_chrome_import_opens_requested_dedao_url_with_body_selector(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """得到文章 URL 含 id 查询参数时，应能匹配已跳转后的同路径标签页。"""
+        """得到 Chrome 导入应直接打开请求 URL，并只抽取正文容器。"""
         library = _library(tmp_path)
-        seen_filters: list[str | None] = []
+        target_url = 'https://www.dedao.cn/course/article?id=obyr'
+        seen_calls: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
 
-        def fake_extract_page_text(
+        def fake_extract_chrome_url_text(
+            url: str,
             *,
-            url_contains: str | None = None,
+            preferred_selectors: tuple[str, ...] = (),
+            preferred_title_selectors: tuple[str, ...] = (),
         ) -> BrowserPageText:
-            seen_filters.append(url_contains)
-            if url_contains == 'www.dedao.cn/course/article?id=obyr':
-                raise BrowserExtractionError('没有 Chrome 标签页符合指定筛选条件。')
-            assert url_contains == 'www.dedao.cn/course/article'
+            seen_calls.append((url, preferred_selectors, preferred_title_selectors))
             return BrowserPageText(
                 title='得到课程单篇',
-                url='https://www.dedao.cn/course/article?enid=obyr',
-                selector='main',
+                url=url,
+                selector='.article-body',
                 text='第一段正文解释核心概念。第二句继续说明。',
             )
 
-        monkeypatch.setattr('read_along.importers.extract_page_text', fake_extract_page_text)
+        monkeypatch.setattr('read_along.importers.extract_chrome_url_text', fake_extract_chrome_url_text)
 
         result = import_url(
-            url='https://www.dedao.cn/course/article?id=obyr',
+            url=target_url,
             mode='chrome',
             library=library,
         )
 
-        assert seen_filters == [
-            'www.dedao.cn/course/article?id=obyr',
-            'www.dedao.cn/course/article',
-        ]
-        assert result.primary_source.source_uri == 'https://www.dedao.cn/course/article?enid=obyr'
+        assert seen_calls == [(target_url, ('.article-body',), ('.article-title',))]
+        assert result.primary_source.source_uri == target_url
 
-    def test_chrome_import_falls_back_to_front_chrome_tab(
+    def test_chrome_import_opens_requested_generic_url_without_source_selector(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """DevTools 端口不可用时，应尝试读取用户当前已登录的前台 Chrome 标签页。"""
+        """普通 Chrome 导入仍直接打开请求 URL，但不指定来源专用正文容器。"""
         library = _library(tmp_path)
+        target_url = 'https://example.com/article'
+        seen_calls: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
 
-        def fail_extract_page_text(
+        def fake_extract_chrome_url_text(
+            url: str,
             *,
-            url_contains: str | None = None,
+            preferred_selectors: tuple[str, ...] = (),
+            preferred_title_selectors: tuple[str, ...] = (),
         ) -> BrowserPageText:
-            raise BrowserExtractionError('无法连接 Chrome DevTools。')
-
-        def fake_extract_front_chrome_text() -> BrowserPageText:
+            seen_calls.append((url, preferred_selectors, preferred_title_selectors))
             return BrowserPageText(
-                title='得到课程单篇',
-                url='https://www.dedao.cn/course/article?id=obyr',
+                title='普通网页',
+                url=url,
                 selector='article',
                 text='第一段正文解释核心概念。第二句继续说明。',
             )
 
-        def fail_extract_chrome_text_by_url_filters(url_filters: list[str]) -> BrowserPageText:
-            raise BrowserExtractionError('没有 Chrome 标签页符合目标 URL。')
-
-        monkeypatch.setattr('read_along.importers.extract_page_text', fail_extract_page_text)
-        monkeypatch.setattr(
-            'read_along.importers.extract_chrome_text_by_url_filters',
-            fail_extract_chrome_text_by_url_filters,
-        )
-        monkeypatch.setattr('read_along.importers.extract_front_chrome_text', fake_extract_front_chrome_text)
+        monkeypatch.setattr('read_along.importers.extract_chrome_url_text', fake_extract_chrome_url_text)
 
         result = import_url(
-            url='https://www.dedao.cn/course/article?id=obyr',
+            url=target_url,
             mode='chrome',
             library=library,
         )
 
-        assert result.title == '得到课程单篇'
-        assert result.paragraphs[0].sentences[0].text == '第一段正文解释核心概念。'
-
-    def test_chrome_import_searches_all_chrome_tabs_when_front_tab_is_local_app(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """从本地页面点击导入时，应搜索目标标签页而不是读取前台本地应用页。"""
-        library = _library(tmp_path)
-        seen_filters: list[list[str]] = []
-
-        def fail_extract_page_text(
-            *,
-            url_contains: str | None = None,
-        ) -> BrowserPageText:
-            raise BrowserExtractionError('无法连接 Chrome DevTools。')
-
-        def fake_extract_chrome_text_by_url_filters(url_filters: list[str]) -> BrowserPageText:
-            seen_filters.append(url_filters)
-            return BrowserPageText(
-                title='得到课程单篇',
-                url='https://www.dedao.cn/course/article?id=obyr',
-                selector='article',
-                text='第一段正文解释核心概念。第二句继续说明。',
-            )
-
-        def fail_extract_front_chrome_text() -> BrowserPageText:
-            raise AssertionError('不应读取前台本地应用页')
-
-        monkeypatch.setattr('read_along.importers.extract_page_text', fail_extract_page_text)
-        monkeypatch.setattr(
-            importers_module,
-            'extract_chrome_text_by_url_filters',
-            fake_extract_chrome_text_by_url_filters,
-            raising=False,
-        )
-        monkeypatch.setattr('read_along.importers.extract_front_chrome_text', fail_extract_front_chrome_text)
-
-        result = import_url(
-            url='https://www.dedao.cn/course/article?id=obyr',
-            mode='chrome',
-            library=library,
-        )
-
-        assert seen_filters == [['www.dedao.cn/course/article?id=obyr', 'www.dedao.cn/course/article']]
-        assert result.title == '得到课程单篇'
+        assert seen_calls == [(target_url, (), ())]
+        assert result.title == '普通网页'
         assert result.paragraphs[0].sentences[0].text == '第一段正文解释核心概念。'
 
     def test_chrome_import_wraps_browser_errors(
@@ -495,29 +440,20 @@ class TestImportUrl:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Chrome DevTools 和前台标签页都失败时应作为网页导入错误返回。"""
+        """URL 驱动的 Chrome 页面读取失败时应作为网页导入错误返回。"""
         library = _library(tmp_path)
 
-        def fail_extract_page_text(
+        def fail_extract_chrome_url_text(
+            url: str,
             *,
-            url_contains: str | None = None,
+            preferred_selectors: tuple[str, ...] = (),
+            preferred_title_selectors: tuple[str, ...] = (),
         ) -> BrowserPageText:
-            raise BrowserExtractionError('无法连接 Chrome DevTools。')
+            raise BrowserExtractionError('无法在 Chrome 中打开目标 URL。')
 
-        def fail_extract_front_chrome_text() -> BrowserPageText:
-            raise BrowserExtractionError('无法读取 Chrome 前台标签页。')
+        monkeypatch.setattr('read_along.importers.extract_chrome_url_text', fail_extract_chrome_url_text)
 
-        def fail_extract_chrome_text_by_url_filters(url_filters: list[str]) -> BrowserPageText:
-            raise BrowserExtractionError('没有 Chrome 标签页符合目标 URL。')
-
-        monkeypatch.setattr('read_along.importers.extract_page_text', fail_extract_page_text)
-        monkeypatch.setattr(
-            'read_along.importers.extract_chrome_text_by_url_filters',
-            fail_extract_chrome_text_by_url_filters,
-        )
-        monkeypatch.setattr('read_along.importers.extract_front_chrome_text', fail_extract_front_chrome_text)
-
-        with pytest.raises(UrlImportError, match='无法连接 Chrome DevTools'):
+        with pytest.raises(UrlImportError, match='无法在 Chrome 中打开目标 URL'):
             import_url(
                 url='https://www.dedao.cn/course/article',
                 mode='chrome',

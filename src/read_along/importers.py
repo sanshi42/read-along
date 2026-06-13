@@ -9,10 +9,7 @@ from urllib.parse import urlsplit
 
 from read_along.browser import (
     BrowserExtractionError,
-    BrowserPageText,
-    extract_chrome_text_by_url_filters,
-    extract_front_chrome_text,
-    extract_page_text,
+    extract_chrome_url_text,
 )
 from read_along.extractors import pdf_page_texts, structure_text
 from read_along.material_library import MaterialLibrary
@@ -124,8 +121,17 @@ def import_url(
 
 
 def fetch_chrome_page(url: str) -> WebPageContent:
-    """从专用 Chrome DevTools 会话读取匹配 URL 的页面正文。"""
-    page = _extract_chrome_page(url)
+    """在已登录 Chrome 会话中新建临时标签页并读取目标 URL 正文。"""
+    preferred_selectors = dedao.CONTENT_SELECTORS if dedao.supports_url(url) else ()
+    preferred_title_selectors = dedao.TITLE_SELECTORS if dedao.supports_url(url) else ()
+    try:
+        page = extract_chrome_url_text(
+            url,
+            preferred_selectors=preferred_selectors,
+            preferred_title_selectors=preferred_title_selectors,
+        )
+    except BrowserExtractionError as exc:
+        raise UrlImportError(f'Chrome 页面读取失败：{exc}') from exc
 
     text = _clean_chrome_text(
         requested_url=url,
@@ -181,68 +187,6 @@ def _validate_url(url: str) -> None:
         raise UrlImportError('请输入有效的 HTTP 或 HTTPS URL。')
     if parsed.username is not None or parsed.password is not None:
         raise UrlImportError('URL 不得包含用户名或密码。')
-
-
-def _chrome_tab_filter(url: str) -> str:
-    parsed = urlsplit(url)
-    path = parsed.path.rstrip('/')
-    filter_text = f'{parsed.netloc}{path}'
-    if parsed.query:
-        filter_text = f'{filter_text}?{parsed.query}'
-    return filter_text
-
-
-def _chrome_tab_filters(url: str) -> list[str]:
-    exact = _chrome_tab_filter(url)
-    parsed = urlsplit(url)
-    path = parsed.path.rstrip('/')
-    without_query = f'{parsed.netloc}{path}'
-    return list(dict.fromkeys([exact, without_query]))
-
-
-def _extract_chrome_page(url: str) -> BrowserPageText:
-    errors: list[str] = []
-    url_filters = _chrome_tab_filters(url)
-    for url_filter in url_filters:
-        try:
-            return extract_page_text(url_contains=url_filter)
-        except BrowserExtractionError as exc:
-            errors.append(str(exc))
-
-    try:
-        return extract_chrome_text_by_url_filters(url_filters)
-    except BrowserExtractionError as exc:
-        errors.append(str(exc))
-
-    try:
-        page = extract_front_chrome_text()
-    except BrowserExtractionError as exc:
-        errors.append(str(exc))
-        raise UrlImportError(_chrome_error_message(errors)) from exc
-
-    if not _chrome_page_matches(url, page.url):
-        errors.append(f'Chrome 当前活动标签页不是请求的网页（当前页面：{page.url or "未知"}）。')
-        raise UrlImportError(_chrome_error_message(errors))
-    return page
-
-
-def _chrome_page_matches(requested_url: str, page_url: str) -> bool:
-    if not page_url:
-        return False
-    requested = urlsplit(requested_url)
-    page = urlsplit(page_url)
-    requested_host = requested.hostname or ''
-    page_host = page.hostname or ''
-    requested_path = requested.path.rstrip('/') or '/'
-    page_path = page.path.rstrip('/') or '/'
-    return requested_host.lower() == page_host.lower() and requested_path == page_path
-
-
-def _chrome_error_message(errors: list[str]) -> str:
-    unique_errors = list(dict.fromkeys(error for error in errors if error.strip()))
-    if not unique_errors:
-        return 'Chrome 页面读取失败。'
-    return 'Chrome 页面读取失败：' + '；'.join(unique_errors)
 
 
 def _clean_chrome_text(*, requested_url: str, page_url: str, text: str) -> str:

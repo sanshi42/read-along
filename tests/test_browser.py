@@ -1,26 +1,35 @@
 import json
 import subprocess
-import urllib.error
 
 import pytest
 
 from read_along import browser
 from read_along.browser import (
-    EXTRACT_PAGE_SCRIPT,
-    BrowserExtractionError,
-    BrowserTab,
+    build_extract_page_script,
     clean_browser_text,
-    devtools_origin,
-    extract_chrome_text_by_url_filters,
-    fetch_tabs,
+    extract_chrome_url_text,
     page_text_from_payload,
-    select_tab,
 )
 
 
 def test_extract_page_script_uses_body_only_as_fallback() -> None:
-    assert "candidates.push({ selector: 'body'" not in EXTRACT_PAGE_SCRIPT
-    assert "const best = candidates[0] || { selector: 'body'" in EXTRACT_PAGE_SCRIPT
+    script = build_extract_page_script()
+
+    assert "candidates.push({ selector: 'body'" not in script
+    assert "? { selector: preferredSelectors[0], text: '', length: 0 }" in script
+    assert ": { selector: 'body', text: bodyText, length: bodyText.length }" in script
+
+
+def test_extract_page_script_prefers_requested_content_selector() -> None:
+    script = build_extract_page_script(
+        ('.article-body',),
+        preferred_title_selectors=('.article-title',),
+    )
+
+    assert 'const preferredSelectors = [".article-body"];' in script
+    assert 'const preferredTitleSelectors = [".article-title"];' in script
+    assert 'preferredSelectors.length > 0 ? preferredCandidates : fallbackCandidates' in script
+    assert 'preferredTitleSelectors.length > 0' in script
 
 
 def test_clean_browser_text_drops_repeated_generic_noise_lines() -> None:
@@ -37,40 +46,6 @@ def test_clean_browser_text_drops_repeated_generic_noise_lines() -> None:
     assert '分享' not in cleaned
     assert cleaned.count('第一段正文解释核心概念。') == 1
     assert '第二段正文给出应用场景。' in cleaned
-
-
-def test_select_tab_requires_narrow_match() -> None:
-    tabs = [
-        BrowserTab('课程 A', 'https://www.dedao.cn/course/a', 'ws://127.0.0.1:9222/a'),
-        BrowserTab('课程 B', 'https://www.dedao.cn/course/b', 'ws://127.0.0.1:9222/b'),
-    ]
-
-    with pytest.raises(BrowserExtractionError):
-        select_tab(tabs, url_contains='dedao.cn')
-
-    selected = select_tab(tabs, url_contains='/course/b')
-    assert selected.title == '课程 B'
-
-
-def test_fetch_tabs_preserves_original_connection_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fail_to_open(*args: object, **kwargs: object) -> None:
-        raise urllib.error.URLError('connection refused')
-
-    monkeypatch.setattr(browser.urllib.request, 'urlopen', fail_to_open)
-
-    with pytest.raises(BrowserExtractionError) as exc_info:
-        fetch_tabs()
-
-    message = str(exc_info.value)
-    assert '无法连接 Chrome DevTools' in message
-    assert 'connection refused' in message
-
-
-def test_devtools_origin_matches_websocket_endpoint() -> None:
-    assert devtools_origin('ws://127.0.0.1:9222/devtools/page/1') == 'http://127.0.0.1:9222'
-    assert devtools_origin('wss://example.test/devtools/page/1') == 'https://example.test'
 
 
 def test_page_text_from_payload_cleans_without_saving_source() -> None:
@@ -92,7 +67,7 @@ def test_page_text_from_payload_cleans_without_saving_source() -> None:
     assert page.text == '第一段正文。\n\n第二段正文。'
 
 
-def test_extract_chrome_text_by_url_filters_passes_filters_to_jxa(
+def test_extract_chrome_url_text_passes_target_url_and_closes_temp_tab(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured_args: list[str] = []
@@ -119,15 +94,18 @@ def test_extract_chrome_text_by_url_filters_passes_filters_to_jxa(
 
     monkeypatch.setattr(browser.subprocess, 'run', fake_run)
 
-    page = extract_chrome_text_by_url_filters(
-        ['www.dedao.cn/course/article?id=obyr', 'www.dedao.cn/course/article'],
+    page = extract_chrome_url_text(
+        'https://www.dedao.cn/course/article?id=obyr',
+        preferred_selectors=('.article-body',),
+        preferred_title_selectors=('.article-title',),
     )
 
     assert captured_args[:4] == ['osascript', '-l', 'JavaScript', '-e']
-    assert json.loads(captured_args[-1]) == [
-        'www.dedao.cn/course/article?id=obyr',
-        'www.dedao.cn/course/article',
-    ]
+    assert 'chrome.Tab({ url: targetUrl })' in captured_args[4]
+    assert 'tab.close()' in captured_args[4]
+    assert captured_args[-3] == 'https://www.dedao.cn/course/article?id=obyr'
+    assert json.loads(captured_args[-2]) == ['.article-body']
+    assert 'const preferredTitleSelectors = [".article-title"];' in captured_args[-1]
     assert page.title == '得到课程单篇'
     assert page.url == 'https://www.dedao.cn/course/article?id=obyr'
     assert page.text == '正文第一句。正文第二句。'

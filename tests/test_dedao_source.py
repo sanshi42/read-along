@@ -1,10 +1,15 @@
-from read_along.sources.dedao import clean_text, supports_url
+from read_along.sources.dedao import CONTENT_SELECTORS, TITLE_SELECTORS, clean_text, supports_url
 
 
 def test_supports_dedao_urls_only() -> None:
     assert supports_url('https://www.dedao.cn/course/article')
     assert supports_url('https://m.dedao.cn/article')
     assert not supports_url('https://example.com/dedao.cn/article')
+
+
+def test_dedao_uses_article_body_as_content_container() -> None:
+    assert CONTENT_SELECTORS == ('.article-body',)
+    assert TITLE_SELECTORS == ('.article-title',)
 
 
 def test_clean_text_drops_dedao_specific_noise() -> None:
