@@ -30,6 +30,7 @@ export interface MaterialDetail extends MaterialSummary {
       index: number;
       text: string;
       audio_status: "pending" | "ready" | "failed";
+      error_message: string | null;
     }>;
   }>;
 }

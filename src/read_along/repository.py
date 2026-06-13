@@ -265,6 +265,44 @@ class Repository:
         ).fetchall()
         return _rows_model(rows, Sentence)
 
+    def get_sentence(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        material_id: str,
+        sentence_id: str,
+    ) -> Sentence | None:
+        """按材料和句子 ID 查询单句。"""
+        row = connection.execute(
+            """
+            SELECT *
+            FROM sentences
+            WHERE id = ? AND material_id = ?
+            """,
+            (sentence_id, material_id),
+        ).fetchone()
+        return _row_model(row, Sentence)
+
+    def update_sentence_audio(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        material_id: str,
+        sentence_id: str,
+        audio_status: str,
+        audio_path: str | None,
+        error_message: str | None,
+    ) -> None:
+        """更新单句音频状态。"""
+        connection.execute(
+            """
+            UPDATE sentences
+            SET audio_status = ?, audio_path = ?, error_message = ?
+            WHERE id = ? AND material_id = ?
+            """,
+            (audio_status, audio_path, error_message, sentence_id, material_id),
+        )
+
     def sentence_belongs_to_material(
         self,
         connection: sqlite3.Connection,

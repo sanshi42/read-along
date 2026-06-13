@@ -91,6 +91,31 @@ class Sentence(DataModel):
     error_message: str | None
 
 
+class SentenceResponse(DataModel):
+    """API 返回的阅读材料句子。"""
+
+    id: str
+    material_id: str
+    paragraph_id: str
+    index: int
+    text: str
+    audio_status: AudioStatus
+    error_message: str | None
+
+    @classmethod
+    def from_sentence(cls, sentence: Sentence) -> SentenceResponse:
+        """从材料库内部句子创建公开响应。"""
+        return cls(
+            id=sentence.id,
+            material_id=sentence.material_id,
+            paragraph_id=sentence.paragraph_id,
+            index=sentence.index,
+            text=sentence.text,
+            audio_status=sentence.audio_status,
+            error_message=sentence.error_message,
+        )
+
+
 class ReadingProgress(DataModel):
     """阅读材料播放进度。"""
 
@@ -104,6 +129,24 @@ class ParagraphDetail(Paragraph):
     """包含句子列表的段落详情。"""
 
     sentences: list[Sentence]
+
+
+class ParagraphDetailResponse(Paragraph):
+    """API 返回的包含句子列表的段落详情。"""
+
+    sentences: list[SentenceResponse]
+
+    @classmethod
+    def from_detail(cls, paragraph: ParagraphDetail) -> ParagraphDetailResponse:
+        """从材料库内部段落详情创建公开响应。"""
+        return cls(
+            id=paragraph.id,
+            material_id=paragraph.material_id,
+            index=paragraph.index,
+            text=paragraph.text,
+            source_label=paragraph.source_label,
+            sentences=[SentenceResponse.from_sentence(sentence) for sentence in paragraph.sentences],
+        )
 
 
 class MaterialSummary(Material):
@@ -122,11 +165,50 @@ class MaterialDetail(Material):
     paragraphs: list[ParagraphDetail]
 
 
+class MaterialDetailResponse(Material):
+    """API 返回的阅读材料详情。"""
+
+    primary_source: MaterialSource
+    sources: list[MaterialSource]
+    progress: ReadingProgress | None
+    paragraphs: list[ParagraphDetailResponse]
+
+    @classmethod
+    def from_detail(cls, material: MaterialDetail) -> MaterialDetailResponse:
+        """从材料库内部详情创建公开响应。"""
+        return cls(
+            id=material.id,
+            title=material.title,
+            content_hash=material.content_hash,
+            created_at=material.created_at,
+            updated_at=material.updated_at,
+            primary_source=material.primary_source,
+            sources=material.sources,
+            progress=material.progress,
+            paragraphs=[ParagraphDetailResponse.from_detail(paragraph) for paragraph in material.paragraphs],
+        )
+
+
 class MaterialImportResult(DataModel):
     """包含结果原因和阅读材料的导入结果。"""
 
     outcome: ImportOutcome
     material: MaterialDetail
+
+
+class MaterialImportResponse(DataModel):
+    """API 返回的阅读材料导入结果。"""
+
+    outcome: ImportOutcome
+    material: MaterialDetailResponse
+
+    @classmethod
+    def from_result(cls, result: MaterialImportResult) -> MaterialImportResponse:
+        """从材料库内部导入结果创建公开响应。"""
+        return cls(
+            outcome=result.outcome,
+            material=MaterialDetailResponse.from_detail(result.material),
+        )
 
 
 class ReadingMaterialDraftParagraph(DataModel):

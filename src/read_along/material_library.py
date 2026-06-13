@@ -5,6 +5,7 @@ import json
 import math
 import shutil
 import sqlite3
+import threading
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +33,7 @@ from read_along.models import (
 )
 from read_along.repository import Repository
 from read_along.storage import StoragePaths
+from read_along.tts import MacOSSayTTS, TTSGenerationError
 
 
 class MaterialLibraryError(RuntimeError):
@@ -48,6 +50,14 @@ class SourceChangedError(MaterialLibraryError):
 
 class MaterialNotFoundError(MaterialLibraryError):
     """指定阅读材料不存在。"""
+
+
+class AudioGenerationError(MaterialLibraryError):
+    """句子音频暂时无法生成或访问。"""
+
+
+class AudioNotFoundError(MaterialLibraryError):
+    """指定句子音频不存在或不属于指定材料。"""
 
 
 class InvalidProgressError(MaterialLibraryError):
@@ -70,6 +80,22 @@ def _file_hash(path: Path) -> str:
         for chunk in iter(lambda: source.read(1024 * 1024), b''):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _clean_audio_error(message: str, *, sensitive_text: str, storage_home: Path) -> str:
+    cleaned = ' '.join(message.split())
+    normalized_sensitive_text = ' '.join(sensitive_text.split())
+    if normalized_sensitive_text:
+        cleaned = cleaned.replace(normalized_sensitive_text, '[正文已隐藏]')
+    return cleaned.replace(str(storage_home), '[本地数据目录]') or '句子音频生成失败。'
+
+
+def _audio_relative_path(material_id: str, sentence_id: str) -> Path:
+    for identity in (material_id, sentence_id):
+        identity_path = Path(identity)
+        if not identity or identity in {'.', '..'} or identity_path.is_absolute() or identity_path.parts != (identity,):
+            raise AudioGenerationError('句子音频缓存路径不合法。')
+    return Path(material_id) / f'{sentence_id}.wav'
 
 
 def _normalized_url(url: str) -> str:
@@ -103,9 +129,12 @@ def _normalized_url(url: str) -> str:
 class MaterialLibrary:
     """管理阅读材料的完整持久化生命周期。"""
 
-    def __init__(self, storage_paths: StoragePaths) -> None:
+    def __init__(self, storage_paths: StoragePaths, *, tts: MacOSSayTTS | None = None) -> None:
         self.storage_paths = storage_paths
         self.repository = Repository(storage_paths.database)
+        self.tts = tts or MacOSSayTTS()
+        self._audio_locks_guard = threading.Lock()
+        self._audio_locks: dict[tuple[str, str], threading.Lock] = {}
 
     def save(self, draft: ReadingMaterialDraft) -> MaterialImportResult:
         """原子保存阅读材料 Draft，重复导入时返回现有材料。"""
@@ -280,6 +309,100 @@ class MaterialLibrary:
         assert progress is not None
         return progress
 
+    def get_or_generate_audio(self, material_id: str, sentence_id: str) -> Path:
+        """返回句子缓存音频，缺失时同步生成。"""
+        with self._audio_lock(material_id, sentence_id):
+            return self._get_or_generate_audio_locked(material_id, sentence_id)
+
+    def _get_or_generate_audio_locked(self, material_id: str, sentence_id: str) -> Path:
+        try:
+            with closing(self.repository.connect()) as connection:
+                sentence = self.repository.get_sentence(
+                    connection,
+                    material_id=material_id,
+                    sentence_id=sentence_id,
+                )
+        except sqlite3.Error as exc:
+            raise AudioGenerationError('无法读取句子音频状态。') from exc
+        if sentence is None:
+            raise AudioNotFoundError('句子音频不存在。')
+
+        relative_path = _audio_relative_path(material_id, sentence_id)
+        output_path = self.storage_paths.audio / relative_path
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            message = '无法访问句子音频缓存。'
+            self._update_audio_state(
+                material_id,
+                sentence_id,
+                audio_status=AudioStatus.FAILED,
+                audio_path=None,
+                error_message=message,
+            )
+            raise AudioGenerationError(message) from exc
+        try:
+            path_escaped = output_path.parent.is_symlink() or not output_path.parent.resolve().is_relative_to(
+                self.storage_paths.audio.resolve()
+            )
+        except (OSError, RuntimeError):
+            path_escaped = True
+        if path_escaped:
+            message = '句子音频缓存路径不合法。'
+            self._update_audio_state(
+                material_id,
+                sentence_id,
+                audio_status=AudioStatus.FAILED,
+                audio_path=None,
+                error_message=message,
+            )
+            raise AudioGenerationError(message)
+        if output_path.is_file() and not output_path.is_symlink():
+            self._update_audio_state(
+                material_id,
+                sentence_id,
+                audio_status=AudioStatus.READY,
+                audio_path=relative_path.as_posix(),
+                error_message=None,
+            )
+            return output_path
+        self._update_audio_state(
+            material_id,
+            sentence_id,
+            audio_status=AudioStatus.PENDING,
+            audio_path=None,
+            error_message=None,
+        )
+        try:
+            self.tts.generate(sentence.text, output_path)
+        except TTSGenerationError as exc:
+            message = _clean_audio_error(
+                str(exc),
+                sensitive_text=sentence.text,
+                storage_home=self.storage_paths.home,
+            )
+            self._update_audio_state(
+                material_id,
+                sentence_id,
+                audio_status=AudioStatus.FAILED,
+                audio_path=None,
+                error_message=message,
+            )
+            raise AudioGenerationError(message) from exc
+        self._update_audio_state(
+            material_id,
+            sentence_id,
+            audio_status=AudioStatus.READY,
+            audio_path=relative_path.as_posix(),
+            error_message=None,
+        )
+        return output_path
+
+    def _audio_lock(self, material_id: str, sentence_id: str) -> threading.Lock:
+        key = (material_id, sentence_id)
+        with self._audio_locks_guard:
+            return self._audio_locks.setdefault(key, threading.Lock())
+
     def delete(self, material_id: str) -> None:
         """幂等删除阅读材料及关联本地缓存。"""
         source_paths: list[Path] = []
@@ -432,3 +555,26 @@ class MaterialLibrary:
                 path.unlink(missing_ok=True)
             except OSError:
                 pass
+
+    def _update_audio_state(
+        self,
+        material_id: str,
+        sentence_id: str,
+        *,
+        audio_status: AudioStatus,
+        audio_path: str | None,
+        error_message: str | None,
+    ) -> None:
+        try:
+            with closing(self.repository.connect()) as connection:
+                self.repository.update_sentence_audio(
+                    connection,
+                    material_id=material_id,
+                    sentence_id=sentence_id,
+                    audio_status=audio_status.value,
+                    audio_path=audio_path,
+                    error_message=error_message,
+                )
+                connection.commit()
+        except sqlite3.Error as exc:
+            raise AudioGenerationError('无法更新句子音频状态。') from exc

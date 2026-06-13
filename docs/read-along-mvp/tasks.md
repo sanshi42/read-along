@@ -2,27 +2,20 @@
 
 ## Status
 
-单篇导入闭环和单句本地音频生成已经完成，材料库、书架和阅读页基础能力可用。当前进入句子音频缓存与访问 API，之后补齐朗读闭环。
+单篇导入闭环和句子音频缓存与访问 API 已经完成，材料库、书架和阅读页基础能力可用。当前进入基础播放器，之后补齐高亮、倍速和断点续读。
 
 阻塞项：无。
 
 ## Current Task
-
-### T004: 实现句子音频缓存与访问 API
-
-- Goal: 已生成句子音频可以复用并由前端访问。
-- Boundary: 按阅读材料和句子缓存音频，提供必要 API，不实现独立任务进度。
-- Verification: 重复请求不重新生成音频；缺失和失败路径有明确结果；运行 `make check`。
-- Status: Ready。
-
-## Next Tasks
 
 ### T005: 实现基础播放器
 
 - Goal: 用户可以播放、暂停并切换上一句或下一句。
 - Boundary: 只实现句子级播放控制和自动进入下一句，不处理高亮与进度保存。
 - Verification: 浏览器验证播放、暂停、切句和自动续播；运行 `make check`。
-- Status: Planned。
+- Status: Ready。
+
+## Next Tasks
 
 ### T006: 同步句子高亮、倍速和阅读进度
 
@@ -39,6 +32,13 @@
 - Status: Planned。
 
 ## Done
+
+### T004: 实现句子音频缓存与访问 API
+
+- Goal: 已生成句子音频可以复用并由前端访问。
+- Boundary: 按阅读材料和句子缓存音频，提供必要 API，不实现独立任务进度。
+- Verification: 自动测试覆盖首次生成、缓存复用、自愈、失败重试、错误映射、按句并发和响应 DTO；真实 macOS `say` 经音频 API 返回可播放 RIFF/WAVE，重复请求复用缓存；运行 `make check`，189 项测试及前端生产构建通过。
+- Status: Done。
 
 ### T003: 实现单句 macOS say TTS 适配器
 

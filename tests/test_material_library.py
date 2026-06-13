@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,8 @@ from read_along.config import AppConfig
 from read_along.db import initialize_database
 from read_along.ids import generate_source_id
 from read_along.material_library import (
+    AudioGenerationError,
+    AudioNotFoundError,
     InvalidDraftError,
     InvalidProgressError,
     MaterialLibrary,
@@ -18,12 +22,14 @@ from read_along.material_library import (
     SourceChangedError,
 )
 from read_along.models import (
+    AudioStatus,
     ImportOutcome,
     ReadingMaterialDraft,
     ReadingMaterialDraftParagraph,
     SourceType,
 )
 from read_along.storage import StoragePaths
+from read_along.tts import TTSGenerationError
 
 
 def material_library(tmp_path: Path) -> tuple[MaterialLibrary, StoragePaths]:
@@ -231,6 +237,349 @@ def test_save_progress_validates_material_sentence_and_rate(tmp_path: Path) -> N
             first.material.paragraphs[0].sentences[0].id,
             0,
         )
+
+
+def test_get_or_generate_audio_generates_and_persists_ready_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, paths = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('需要朗读。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    original_updated_at = material.material.updated_at
+    calls: list[tuple[str, Path]] = []
+
+    def generate(text: str, output_path: Path) -> Path:
+        calls.append((text, output_path))
+        output_path.write_bytes(b'RIFFaudioWAVE')
+        return output_path
+
+    monkeypatch.setattr(library.tts, 'generate', generate)
+
+    audio_path = library.get_or_generate_audio(material.material.id, sentence.id)
+
+    expected_path = paths.audio / material.material.id / f'{sentence.id}.wav'
+    reopened = library.get(material.material.id)
+    reopened_sentence = reopened.paragraphs[0].sentences[0]
+    assert audio_path == expected_path
+    assert calls == [('需要朗读。', expected_path)]
+    assert reopened_sentence.audio_status is AudioStatus.READY
+    assert reopened_sentence.audio_path == f'{material.material.id}/{sentence.id}.wav'
+    assert reopened_sentence.error_message is None
+    assert reopened.updated_at == original_updated_at
+
+
+def test_get_or_generate_audio_reuses_existing_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, _ = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('需要缓存。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    calls = 0
+
+    def generate(text: str, output_path: Path) -> Path:
+        nonlocal calls
+        calls += 1
+        output_path.write_bytes(b'RIFFaudioWAVE')
+        return output_path
+
+    monkeypatch.setattr(library.tts, 'generate', generate)
+
+    first = library.get_or_generate_audio(material.material.id, sentence.id)
+    second = library.get_or_generate_audio(material.material.id, sentence.id)
+
+    assert first == second
+    assert calls == 1
+
+
+def test_get_or_generate_audio_repairs_state_when_cache_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, paths = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('已经生成。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    expected_path = paths.audio / material.material.id / f'{sentence.id}.wav'
+    expected_path.parent.mkdir()
+    expected_path.write_bytes(b'RIFFaudioWAVE')
+    with sqlite3.connect(paths.database) as connection:
+        connection.execute(
+            """
+            UPDATE sentences
+            SET audio_status = 'failed', audio_path = '../outside.wav', error_message = '旧错误'
+            WHERE id = ?
+            """,
+            (sentence.id,),
+        )
+
+    monkeypatch.setattr(
+        library.tts,
+        'generate',
+        lambda text, output_path: pytest.fail('已有缓存时不应再次生成'),
+    )
+
+    audio_path = library.get_or_generate_audio(material.material.id, sentence.id)
+
+    reopened_sentence = library.get(material.material.id).paragraphs[0].sentences[0]
+    assert audio_path == expected_path
+    assert reopened_sentence.audio_status is AudioStatus.READY
+    assert reopened_sentence.audio_path == f'{material.material.id}/{sentence.id}.wav'
+    assert reopened_sentence.error_message is None
+
+
+def test_get_or_generate_audio_regenerates_when_ready_cache_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, paths = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('缓存丢失。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    relative_path = f'{material.material.id}/{sentence.id}.wav'
+    with sqlite3.connect(paths.database) as connection:
+        connection.execute(
+            """
+            UPDATE sentences
+            SET audio_status = 'ready', audio_path = ?, error_message = NULL
+            WHERE id = ?
+            """,
+            (relative_path, sentence.id),
+        )
+    calls = 0
+
+    def generate(text: str, output_path: Path) -> Path:
+        nonlocal calls
+        calls += 1
+        output_path.write_bytes(b'RIFFaudioWAVE')
+        return output_path
+
+    monkeypatch.setattr(library.tts, 'generate', generate)
+
+    audio_path = library.get_or_generate_audio(material.material.id, sentence.id)
+
+    assert audio_path == paths.audio / relative_path
+    assert calls == 1
+    assert library.get(material.material.id).paragraphs[0].sentences[0].audio_status is AudioStatus.READY
+
+
+def test_get_or_generate_audio_records_failure_and_retries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, paths = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('不可暴露的正文。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    attempts = 0
+
+    def generate(text: str, output_path: Path) -> Path:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise TTSGenerationError(f'暂时失败：{paths.home}；{text}')
+        output_path.write_bytes(b'RIFFaudioWAVE')
+        return output_path
+
+    monkeypatch.setattr(library.tts, 'generate', generate)
+
+    with pytest.raises(AudioGenerationError) as error:
+        library.get_or_generate_audio(material.material.id, sentence.id)
+
+    message = str(error.value)
+    failed_sentence = library.get(material.material.id).paragraphs[0].sentences[0]
+    assert str(paths.home) not in message
+    assert sentence.text not in message
+    assert failed_sentence.audio_status is AudioStatus.FAILED
+    assert failed_sentence.audio_path is None
+    assert failed_sentence.error_message == message
+
+    audio_path = library.get_or_generate_audio(material.material.id, sentence.id)
+
+    ready_sentence = library.get(material.material.id).paragraphs[0].sentences[0]
+    assert audio_path.is_file()
+    assert attempts == 2
+    assert ready_sentence.audio_status is AudioStatus.READY
+    assert ready_sentence.error_message is None
+
+
+def test_get_or_generate_audio_hides_missing_material_and_sentence_identity(tmp_path: Path) -> None:
+    library, _ = material_library(tmp_path)
+    first = library.save(url_draft(url='https://example.com/first', sentences=('甲。',)))
+    second = library.save(url_draft(url='https://example.com/second', sentences=('乙。',)))
+    first_sentence_id = first.material.paragraphs[0].sentences[0].id
+    second_sentence_id = second.material.paragraphs[0].sentences[0].id
+
+    for material_id, sentence_id in (
+        ('missing', first_sentence_id),
+        (first.material.id, 'missing'),
+        (first.material.id, second_sentence_id),
+    ):
+        with pytest.raises(AudioNotFoundError, match=r'^句子音频不存在。$'):
+            library.get_or_generate_audio(material_id, sentence_id)
+
+
+def test_get_or_generate_audio_reports_cache_directory_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, paths = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('无法缓存。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    (paths.audio / material.material.id).write_text('占用目标目录')
+    monkeypatch.setattr(
+        library.tts,
+        'generate',
+        lambda text, output_path: pytest.fail('缓存目录不可用时不应调用 TTS'),
+    )
+
+    with pytest.raises(AudioGenerationError, match=r'^无法访问句子音频缓存。$') as error:
+        library.get_or_generate_audio(material.material.id, sentence.id)
+
+    failed_sentence = library.get(material.material.id).paragraphs[0].sentences[0]
+    assert str(paths.home) not in str(error.value)
+    assert failed_sentence.audio_status is AudioStatus.FAILED
+    assert failed_sentence.error_message == '无法访问句子音频缓存。'
+
+
+def test_get_or_generate_audio_reports_state_persistence_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, _ = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('无法写状态。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+
+    def fail_update(*args: object, **kwargs: object) -> None:
+        raise sqlite3.OperationalError('不可暴露的数据库错误')
+
+    monkeypatch.setattr(library.repository, 'update_sentence_audio', fail_update)
+    monkeypatch.setattr(
+        library.tts,
+        'generate',
+        lambda text, output_path: pytest.fail('状态写入失败时不应调用 TTS'),
+    )
+
+    with pytest.raises(AudioGenerationError, match=r'^无法更新句子音频状态。$'):
+        library.get_or_generate_audio(material.material.id, sentence.id)
+
+
+def test_get_or_generate_audio_reports_state_read_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, _ = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('无法读状态。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+
+    def fail_read(*args: object, **kwargs: object) -> None:
+        raise sqlite3.OperationalError('不可暴露的数据库错误')
+
+    monkeypatch.setattr(library.repository, 'get_sentence', fail_read)
+
+    with pytest.raises(AudioGenerationError, match=r'^无法读取句子音频状态。$'):
+        library.get_or_generate_audio(material.material.id, sentence.id)
+
+
+def test_get_or_generate_audio_rejects_cache_path_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, _ = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('路径异常。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    escaped_sentence = sentence.model_copy(update={'material_id': '..'})
+    monkeypatch.setattr(library.repository, 'get_sentence', lambda *args, **kwargs: escaped_sentence)
+    monkeypatch.setattr(
+        library.tts,
+        'generate',
+        lambda text, output_path: pytest.fail('缓存路径异常时不应调用 TTS'),
+    )
+
+    with pytest.raises(AudioGenerationError, match=r'^句子音频缓存路径不合法。$'):
+        library.get_or_generate_audio('..', sentence.id)
+
+
+def test_get_or_generate_audio_rejects_symlink_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, paths = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('符号链接异常。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (paths.audio / material.material.id).symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(
+        library.tts,
+        'generate',
+        lambda text, output_path: pytest.fail('缓存路径逃逸时不应调用 TTS'),
+    )
+
+    with pytest.raises(AudioGenerationError, match=r'^句子音频缓存路径不合法。$'):
+        library.get_or_generate_audio(material.material.id, sentence.id)
+
+    assert list(outside.iterdir()) == []
+    failed_sentence = library.get(material.material.id).paragraphs[0].sentences[0]
+    assert failed_sentence.audio_status is AudioStatus.FAILED
+    assert failed_sentence.error_message == '句子音频缓存路径不合法。'
+
+
+def test_get_or_generate_audio_deduplicates_concurrent_requests_for_same_sentence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, _ = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('并发生成。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    second_generation_started = threading.Event()
+    count_lock = threading.Lock()
+    calls = 0
+
+    def generate(text: str, output_path: Path) -> Path:
+        nonlocal calls
+        with count_lock:
+            calls += 1
+            current_call = calls
+        if current_call == 1:
+            second_generation_started.wait(timeout=0.5)
+        else:
+            second_generation_started.set()
+        output_path.write_bytes(b'RIFFaudioWAVE')
+        return output_path
+
+    monkeypatch.setattr(library.tts, 'generate', generate)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(library.get_or_generate_audio, material.material.id, sentence.id) for _ in range(2)]
+        paths = [future.result() for future in futures]
+
+    assert paths[0] == paths[1]
+    assert calls == 1
+
+
+def test_get_or_generate_audio_allows_different_sentences_to_generate_concurrently(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, _ = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('第一句。', '第二句。')))
+    sentences = material.material.paragraphs[0].sentences
+    generation_barrier = threading.Barrier(2, timeout=1)
+
+    def generate(text: str, output_path: Path) -> Path:
+        generation_barrier.wait()
+        output_path.write_bytes(b'RIFFaudioWAVE')
+        return output_path
+
+    monkeypatch.setattr(library.tts, 'generate', generate)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(library.get_or_generate_audio, material.material.id, sentence.id) for sentence in sentences
+        ]
+        paths = [future.result() for future in futures]
+
+    assert len(set(paths)) == 2
+    assert all(path.is_file() for path in paths)
 
 
 def test_delete_is_idempotent_and_cleans_owned_files(tmp_path: Path) -> None:

@@ -5,14 +5,22 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 
 from fastapi import Depends, FastAPI, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from read_along import __version__
 from read_along.config import load_config
 from read_along.db import initialize_database
 from read_along.importers import UrlImportError, import_pdf, import_url
-from read_along.material_library import InvalidDraftError, MaterialLibrary, MaterialNotFoundError, SourceChangedError
+from read_along.material_library import (
+    AudioGenerationError,
+    AudioNotFoundError,
+    InvalidDraftError,
+    MaterialLibrary,
+    MaterialNotFoundError,
+    SourceChangedError,
+)
+from read_along.models import MaterialDetailResponse, MaterialImportResponse
 from read_along.storage import StoragePaths
 
 
@@ -98,12 +106,37 @@ def create_app() -> FastAPI:
         library: MaterialLibrary = Depends(get_material_library),
     ) -> Any:
         try:
-            return library.get(material_id).model_dump(mode='json')
+            return MaterialDetailResponse.from_detail(library.get(material_id)).model_dump(mode='json')
         except MaterialNotFoundError as exc:
             return JSONResponse(
                 status_code=404,
                 content={'detail': str(exc)},
             )
+
+    @app.get('/api/materials/{material_id}/sentences/{sentence_id}/audio')
+    def get_sentence_audio(
+        material_id: str,
+        sentence_id: str,
+        *,
+        library: MaterialLibrary = Depends(get_material_library),
+    ) -> Any:
+        try:
+            audio_path = library.get_or_generate_audio(material_id, sentence_id)
+        except AudioNotFoundError as exc:
+            return JSONResponse(
+                status_code=404,
+                content={'detail': str(exc)},
+            )
+        except AudioGenerationError as exc:
+            return JSONResponse(
+                status_code=503,
+                content={'detail': str(exc)},
+            )
+        return FileResponse(
+            audio_path,
+            media_type='audio/wav',
+            headers={'Cache-Control': 'private, max-age=31536000, immutable'},
+        )
 
     @app.post('/api/import/pdf')
     async def import_pdf_endpoint(
@@ -131,7 +164,7 @@ def create_app() -> FastAPI:
                 filename=file.filename,
                 library=library,
             )
-            return result.model_dump(mode='json')
+            return MaterialImportResponse.from_result(result).model_dump(mode='json')
         except (InvalidDraftError, ValueError) as exc:
             return JSONResponse(
                 status_code=422,
@@ -154,7 +187,7 @@ def create_app() -> FastAPI:
                 mode=request.mode,
                 library=library,
             )
-            return result.model_dump(mode='json')
+            return MaterialImportResponse.from_result(result).model_dump(mode='json')
         except SourceChangedError as exc:
             return JSONResponse(
                 status_code=409,

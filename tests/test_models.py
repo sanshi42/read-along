@@ -6,6 +6,8 @@ from read_along.models import (
     ImportOutcome,
     Material,
     MaterialDetail,
+    MaterialDetailResponse,
+    MaterialImportResponse,
     MaterialImportResult,
     MaterialSource,
     ParagraphDetail,
@@ -134,6 +136,41 @@ def test_material_import_result_expresses_outcome_and_material() -> None:
     assert result.outcome is ImportOutcome.REUSED_SOURCE
     assert result.material.id == 'mat-1'
     assert result.model_dump(mode='json')['outcome'] == 'reused_source'
+
+
+def test_api_material_responses_exclude_internal_audio_path() -> None:
+    sentence = sentence_data()
+    sentence['audio_status'] = 'failed'
+    sentence['audio_path'] = 'mat-1/sentence-1.wav'
+    sentence['error_message'] = '生成失败。'
+    detail = MaterialDetail.model_validate(
+        {
+            **material_data(),
+            'primary_source': source_data(),
+            'sources': [source_data()],
+            'progress': None,
+            'paragraphs': [
+                {
+                    'id': 'paragraph-1',
+                    'material_id': 'mat-1',
+                    'index': 1,
+                    'text': 'Paragraph.',
+                    'source_label': None,
+                    'sentences': [sentence],
+                }
+            ],
+        }
+    )
+    result = MaterialImportResult(outcome=ImportOutcome.CREATED, material=detail)
+
+    detail_data = MaterialDetailResponse.from_detail(detail).model_dump(mode='json')
+    result_data = MaterialImportResponse.from_result(result).model_dump(mode='json')
+
+    public_sentence = detail_data['paragraphs'][0]['sentences'][0]
+    assert 'audio_path' not in public_sentence
+    assert public_sentence['audio_status'] == 'failed'
+    assert public_sentence['error_message'] == '生成失败。'
+    assert result_data['material'] == detail_data
 
 
 def test_reading_material_draft_excludes_persistence_fields() -> None:

@@ -43,14 +43,14 @@
 - Goal: 使用 macOS `say` 为句子生成并复用本地音频。
 - Boundary: TTS 适配器、句子音频缓存和音频访问 API；单句失败不阻断其他句子。
 - Verification: 自动测试覆盖生成、缓存复用和失败路径；真实 macOS 环境可生成并播放单句音频。
-- Status: Active。
+- Status: Done。
 
 ### M4: 完成朗读、高亮和断点续读
 
 - Goal: 用户可以连续朗读材料，并看到同步高亮和恢复后的阅读位置。
 - Boundary: 播放、暂停、上一句、下一句、自动续播、倍速、句子高亮和进度保存。
 - Verification: 浏览器验证完整播放流程；刷新页面和重启服务后恢复位置；运行 `make check`。
-- Status: Planned。
+- Status: Active。
 
 ### M5: 阅读设置与 MVP 验收
 

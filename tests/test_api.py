@@ -11,6 +11,7 @@ from read_along.importers import UrlImportError
 from read_along.material_library import MaterialLibrary
 from read_along.models import MaterialImportResult, ReadingMaterialDraft, ReadingMaterialDraftParagraph, SourceType
 from read_along.storage import StoragePaths
+from read_along.tts import TTSGenerationError
 
 
 def test_health_endpoint() -> None:
@@ -61,6 +62,7 @@ def test_material_detail_returns_saved_material(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.json()['id'] == material.material.id
     assert response.json()['paragraphs'][0]['sentences'][0]['text'] == '第一句。'
+    assert 'audio_path' not in response.json()['paragraphs'][0]['sentences'][0]
 
 
 def test_material_detail_returns_chinese_not_found_error(tmp_path: Path) -> None:
@@ -73,6 +75,82 @@ def test_material_detail_returns_chinese_not_found_error(tmp_path: Path) -> None
 
     assert response.status_code == 404
     assert response.json() == {'detail': '阅读材料不存在：mat_missing'}
+
+
+def test_sentence_audio_endpoint_generates_and_reuses_wav(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = _make_library(tmp_path)
+    material = _save_url_material(library, sentences=['需要朗读。'])
+    sentence = material.material.paragraphs[0].sentences[0]
+    calls = 0
+
+    def generate(text: str, output_path: Path) -> Path:
+        nonlocal calls
+        calls += 1
+        output_path.write_bytes(b'RIFFaudioWAVE')
+        return output_path
+
+    monkeypatch.setattr(library.tts, 'generate', generate)
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+    path = f'/api/materials/{material.material.id}/sentences/{sentence.id}/audio'
+
+    first = client.get(path)
+    second = client.get(path)
+
+    assert first.status_code == 200
+    assert first.content == b'RIFFaudioWAVE'
+    assert first.headers['content-type'] == 'audio/wav'
+    assert first.headers['cache-control'] == 'private, max-age=31536000, immutable'
+    assert second.status_code == 200
+    assert second.content == first.content
+    assert calls == 1
+
+
+def test_sentence_audio_endpoint_hides_missing_identity(tmp_path: Path) -> None:
+    library = _make_library(tmp_path)
+    first = _save_url_material(library, url='https://example.com/first', sentences=['甲。'])
+    second = _save_url_material(library, url='https://example.com/second', sentences=['乙。'])
+    first_sentence_id = first.material.paragraphs[0].sentences[0].id
+    second_sentence_id = second.material.paragraphs[0].sentences[0].id
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+
+    for material_id, sentence_id in (
+        ('missing', first_sentence_id),
+        (first.material.id, 'missing'),
+        (first.material.id, second_sentence_id),
+    ):
+        response = client.get(f'/api/materials/{material_id}/sentences/{sentence_id}/audio')
+
+        assert response.status_code == 404
+        assert response.json() == {'detail': '句子音频不存在。'}
+
+
+def test_sentence_audio_endpoint_returns_retryable_generation_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = _make_library(tmp_path)
+    material = _save_url_material(library, sentences=['生成失败。'])
+    sentence = material.material.paragraphs[0].sentences[0]
+
+    def fail_generation(text: str, output_path: Path) -> Path:
+        raise TTSGenerationError('macOS say 暂时不可用。')
+
+    monkeypatch.setattr(library.tts, 'generate', fail_generation)
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+
+    response = client.get(f'/api/materials/{material.material.id}/sentences/{sentence.id}/audio')
+
+    assert response.status_code == 503
+    assert response.json() == {'detail': 'macOS say 暂时不可用。'}
 
 
 def test_pdf_import_rejects_non_pdf_with_chinese_detail() -> None:
@@ -145,6 +223,7 @@ def test_url_import_uses_material_library(
     assert response.json()['material']['title'] == '示例文章'
     assert response.json()['material']['primary_source']['source_type'] == 'url'
     assert response.json()['material']['paragraphs'][0]['sentences'][0]['text'] == '第一句。'
+    assert 'audio_path' not in response.json()['material']['paragraphs'][0]['sentences'][0]
 
 
 def test_url_import_reports_reused_source_and_reused_content(
