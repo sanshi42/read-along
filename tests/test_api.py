@@ -48,6 +48,7 @@ def test_material_list_returns_saved_material(tmp_path: Path) -> None:
     assert response.json()[0]['id'] == material.material.id
     assert response.json()[0]['title'] == '示例文章'
     assert response.json()[0]['primary_source']['source_uri'] == 'https://example.com/article'
+    assert response.json()[0]['playback_position'] is None
 
 
 def test_material_detail_returns_saved_material(tmp_path: Path) -> None:
@@ -61,8 +62,31 @@ def test_material_detail_returns_saved_material(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json()['id'] == material.material.id
+    assert response.json()['playback_position'] is None
     assert response.json()['paragraphs'][0]['sentences'][0]['text'] == '第一句。'
     assert 'audio_path' not in response.json()['paragraphs'][0]['sentences'][0]
+
+
+def test_material_list_and_detail_return_playback_position(tmp_path: Path) -> None:
+    library = _make_library(tmp_path)
+    material = _save_url_material(library)
+    current_sentence = material.material.paragraphs[0].sentences[1]
+    library.save_progress(material.material.id, current_sentence.id, 1.0)
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+
+    shelf_response = client.get('/api/materials')
+    detail_response = client.get(f'/api/materials/{material.material.id}')
+
+    assert shelf_response.json()[0]['playback_position'] == {
+        'sentence_index': 2,
+        'sentence_count': 2,
+    }
+    assert detail_response.json()['playback_position'] == {
+        'sentence_index': 2,
+        'sentence_count': 2,
+    }
 
 
 def test_material_detail_returns_chinese_not_found_error(tmp_path: Path) -> None:
@@ -240,6 +264,7 @@ def test_pdf_import_uses_material_library(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json()['outcome'] == 'created'
+    assert response.json()['material']['playback_position'] is None
     material_id = response.json()['material']['id']
     assert library.get(material_id).primary_source.source_uri == 'example.pdf'
 
@@ -274,6 +299,7 @@ def test_url_import_uses_material_library(
     assert response.json()['outcome'] == 'created'
     assert response.json()['material']['title'] == '示例文章'
     assert response.json()['material']['primary_source']['source_type'] == 'url'
+    assert response.json()['material']['playback_position'] is None
     assert response.json()['material']['paragraphs'][0]['sentences'][0]['text'] == '第一句。'
     assert 'audio_path' not in response.json()['material']['paragraphs'][0]['sentences'][0]
 

@@ -126,6 +126,13 @@ class ReadingProgress(DataModel):
     updated_at: datetime
 
 
+class PlaybackPosition(DataModel):
+    """阅读材料中的朗读位置。"""
+
+    sentence_index: int = Field(gt=0)
+    sentence_count: int = Field(gt=0)
+
+
 class ParagraphDetail(Paragraph):
     """包含句子列表的段落详情。"""
 
@@ -155,6 +162,7 @@ class MaterialSummary(Material):
 
     primary_source: MaterialSource
     progress: ReadingProgress | None
+    playback_position: PlaybackPosition | None
 
 
 class MaterialDetail(Material):
@@ -163,6 +171,7 @@ class MaterialDetail(Material):
     primary_source: MaterialSource
     sources: list[MaterialSource]
     progress: ReadingProgress | None
+    playback_position: PlaybackPosition | None
     paragraphs: list[ParagraphDetail]
 
 
@@ -172,6 +181,7 @@ class MaterialDetailResponse(Material):
     primary_source: MaterialSource
     sources: list[MaterialSource]
     progress: ReadingProgress | None
+    playback_position: PlaybackPosition | None
     paragraphs: list[ParagraphDetailResponse]
 
     @classmethod
@@ -186,6 +196,7 @@ class MaterialDetailResponse(Material):
             primary_source=material.primary_source,
             sources=material.sources,
             progress=material.progress,
+            playback_position=material.playback_position,
             paragraphs=[ParagraphDetailResponse.from_detail(paragraph) for paragraph in material.paragraphs],
         )
 

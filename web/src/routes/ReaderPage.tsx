@@ -1,3 +1,15 @@
+import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  LocateFixed,
+  LoaderCircle,
+  Pause,
+  Play,
+  RotateCcw,
+  Settings2,
+  X,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
@@ -50,6 +62,7 @@ export function ReaderPage({
   const [progressError, setProgressError] = useState<string | null>(null);
   const [showReturnToCurrent, setShowReturnToCurrent] = useState(false);
   const [showReadingPreferences, setShowReadingPreferences] = useState(false);
+  const [focusableSentenceId, setFocusableSentenceId] = useState<string | null>(null);
   const [materialReloadKey, setMaterialReloadKey] = useState(0);
   const currentSentenceIdRef = useRef<string | null>(null);
   const playbackRateRef = useRef(1);
@@ -65,6 +78,7 @@ export function ReaderPage({
   const followCurrentRef = useRef(true);
   const userScrollIntentUntilRef = useRef(0);
   const readingPreferencesRef = useRef<HTMLDivElement | null>(null);
+  const readingPreferencesTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const sentences = useMemo(
     () => material?.paragraphs.flatMap((paragraph) => paragraph.sentences) ?? [],
@@ -88,6 +102,7 @@ export function ReaderPage({
     setPlaybackError(null);
     setProgressError(null);
     setShowReturnToCurrent(false);
+    setFocusableSentenceId(null);
     updatePlaybackStatus("idle");
     setMaterial(null);
     setError(null);
@@ -120,6 +135,11 @@ export function ReaderPage({
           updatePlaybackStatus("paused");
           scheduleScrollToCurrent("auto");
         }
+        setFocusableSentenceId(
+          progress && sentenceExists
+            ? progress.sentence_id
+            : (item.paragraphs[0]?.sentences[0]?.id ?? null),
+        );
       })
       .catch((reason: unknown) => {
         if (active) {
@@ -183,7 +203,7 @@ export function ReaderPage({
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        setShowReadingPreferences(false);
+        closeReadingPreferences(true);
       }
     }
 
@@ -223,6 +243,7 @@ export function ReaderPage({
     currentSentenceIdRef.current = sentenceId;
     playbackCompletedRef.current = completed;
     setCurrentSentenceId(sentenceId);
+    setFocusableSentenceId(sentenceId);
     setPlaybackCompleted(completed);
     if (options.resumeFollowing) {
       followCurrentRef.current = true;
@@ -309,6 +330,7 @@ export function ReaderPage({
   function selectSentence(sentenceId: string) {
     discardPlayback();
     setPlaybackError(null);
+    setFocusableSentenceId(sentenceId);
     updatePlaybackStatus("paused");
     updateCurrentPosition(sentenceId, false, { resumeFollowing: true });
   }
@@ -420,6 +442,7 @@ export function ReaderPage({
   }
 
   function handleSentenceClick(sentenceId: string) {
+    setFocusableSentenceId(sentenceId);
     if (sentenceId === currentSentenceIdRef.current && !playbackCompletedRef.current) {
       if (playbackStatusRef.current === "playing") {
         void playSentence(sentenceId, true);
@@ -498,6 +521,42 @@ export function ReaderPage({
     });
   }
 
+  function closeReadingPreferences(returnFocus = false) {
+    if (returnFocus) {
+      readingPreferencesTriggerRef.current?.focus();
+    }
+    setShowReadingPreferences(false);
+  }
+
+  function handleSentenceKeyDown(event: React.KeyboardEvent<HTMLSpanElement>, sentenceId: string) {
+    const currentIndex = sentences.findIndex((sentence) => sentence.id === sentenceId);
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      nextIndex = Math.min(currentIndex + 1, sentences.length - 1);
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      nextIndex = Math.max(currentIndex - 1, 0);
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = sentences.length - 1;
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      event.stopPropagation();
+      handleSentenceClick(sentenceId);
+      return;
+    } else {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const nextSentenceId = sentences[nextIndex]?.id;
+    if (nextSentenceId) {
+      document.getElementById(nextSentenceId)?.focus();
+      setFocusableSentenceId(nextSentenceId);
+    }
+  }
+
   const playbackLabel =
     playbackStatus === "loading"
       ? "正在准备音频"
@@ -513,25 +572,42 @@ export function ReaderPage({
     <main className="reader-shell">
       <nav className="reader-nav" aria-label="阅读页导航">
         <Link className="text-link" to="/">
-          ← 返回书架
+          <ArrowLeft aria-hidden="true" />
+          返回书架
         </Link>
         <div className="reader-nav-actions" ref={readingPreferencesRef}>
-          <span>Read Along</span>
+          <span className="reader-brand">Read Along</span>
           <button
-            className="reader-settings-trigger"
+            ref={readingPreferencesTriggerRef}
+            className="icon-button reader-settings-trigger"
             type="button"
             aria-expanded={showReadingPreferences}
             aria-controls="reading-preferences-panel"
+            aria-label="阅读设置"
+            title="阅读设置"
             onClick={() => setShowReadingPreferences((current) => !current)}
           >
-            阅读设置
+            <Settings2 aria-hidden="true" />
           </button>
           {showReadingPreferences ? (
             <div
               id="reading-preferences-panel"
               className="reading-preferences-panel"
+              role="dialog"
               aria-label="阅读设置"
             >
+              <div className="preference-panel-heading">
+                <strong>阅读设置</strong>
+                <button
+                  className="icon-button"
+                  type="button"
+                  aria-label="关闭阅读设置"
+                  title="关闭"
+                  onClick={() => closeReadingPreferences(true)}
+                >
+                  <X aria-hidden="true" />
+                </button>
+              </div>
               <PreferenceOptions<FontSizePreference>
                 label="字号"
                 value={readingPreferences.fontSize}
@@ -578,7 +654,7 @@ export function ReaderPage({
           <h1>阅读页加载失败</h1>
           <p>{error}</p>
           <button
-            className="state-action"
+            className="button button-primary"
             type="button"
             onClick={() => setMaterialReloadKey((current) => current + 1)}
           >
@@ -588,9 +664,13 @@ export function ReaderPage({
       ) : null}
 
       {!error && material === null ? (
-        <section className="state-panel reader-state" aria-live="polite">
-          <div className="loading-mark" aria-hidden="true" />
-          <h1>正在打开阅读页</h1>
+        <section className="reader-loading" aria-live="polite" aria-label="正在打开阅读页">
+          <span className="skeleton-block reader-loading-kicker" />
+          <span className="skeleton-block reader-loading-title" />
+          <span className="skeleton-block reader-loading-source" />
+          <span className="skeleton-block reader-loading-line" />
+          <span className="skeleton-block reader-loading-line" />
+          <span className="skeleton-block reader-loading-line-short" />
         </section>
       ) : null}
 
@@ -613,8 +693,9 @@ export function ReaderPage({
                         key={sentence.id}
                         id={sentence.id}
                         role="button"
-                        tabIndex={0}
+                        tabIndex={sentence.id === focusableSentenceId ? 0 : -1}
                         aria-current={isCurrent ? "true" : undefined}
+                        aria-label={`${sentence.text}${isCurrent ? " 当前句" : ""}`}
                         className={[
                           "reader-sentence",
                           isCurrent ? "reader-sentence-current" : "",
@@ -623,12 +704,8 @@ export function ReaderPage({
                           .filter(Boolean)
                           .join(" ")}
                         onClick={() => handleSentenceClick(sentence.id)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            handleSentenceClick(sentence.id);
-                          }
-                        }}
+                        onFocus={() => setFocusableSentenceId(sentence.id)}
+                        onKeyDown={(event) => handleSentenceKeyDown(event, sentence.id)}
                       >
                         {sentence.text}
                       </span>
@@ -683,39 +760,66 @@ export function ReaderPage({
               </select>
             </label>
             {showReturnToCurrent ? (
-              <button type="button" onClick={returnToCurrentSentence}>
+              <button className="button button-secondary return-current" type="button" onClick={returnToCurrentSentence}>
+                <LocateFixed aria-hidden="true" />
                 回到当前句
               </button>
             ) : null}
             <button
+              className="icon-button player-icon-button"
               type="button"
               disabled={currentSentenceIndex <= 0}
+              aria-label="上一句"
+              title="上一句"
               onClick={() => handleSentenceChange(sentences[currentSentenceIndex - 1].id)}
             >
-              上一句
+              <ChevronLeft aria-hidden="true" />
             </button>
             <button
-              className="player-primary"
+              className="icon-button player-primary"
               type="button"
               disabled={playbackStatus === "loading"}
+              aria-label={
+                playbackStatus === "loading"
+                  ? "正在准备音频"
+                  : playbackStatus === "playing"
+                    ? "暂停"
+                    : playbackCompleted
+                      ? "从头播放"
+                      : "播放"
+              }
+              title={
+                playbackStatus === "loading"
+                  ? "正在准备音频"
+                  : playbackStatus === "playing"
+                    ? "暂停"
+                    : playbackCompleted
+                      ? "从头播放"
+                      : "播放"
+              }
               onClick={handlePlayPause}
             >
-              {playbackStatus === "loading"
-                ? "准备中"
-                : playbackStatus === "playing"
-                  ? "暂停"
-                  : playbackCompleted
-                    ? "从头播放"
-                    : "播放"}
+              {playbackStatus === "loading" ? (
+                <LoaderCircle aria-hidden="true" className="spin" />
+              ) : playbackStatus === "playing" ? (
+                <Pause aria-hidden="true" />
+              ) : playbackCompleted ? (
+                <RotateCcw aria-hidden="true" />
+              ) : (
+                <Play aria-hidden="true" />
+              )}
             </button>
             <button
+              className="icon-button player-icon-button"
               type="button"
               disabled={
                 currentSentenceIndex < 0 || currentSentenceIndex >= sentences.length - 1
               }
+              aria-label="下一句"
+              title="下一句"
               onClick={() => handleSentenceChange(sentences[currentSentenceIndex + 1].id)}
             >
-              下一句
+              <ChevronRight aria-hidden="true" />
             </button>
           </div>
         </section>

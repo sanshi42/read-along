@@ -1,3 +1,4 @@
+import { ArrowLeft, BookOpenText } from "lucide-react";
 import { useState } from "react";
 import { BrowserRouter, Link, Route, Routes } from "react-router-dom";
 
@@ -13,11 +14,13 @@ import { ShelfPage } from "./routes/ShelfPage";
 function NotFoundPage() {
   return (
     <main className="page-shell">
-      <section className="state-panel">
+      <section className="state-panel state-panel-centered">
+        <BookOpenText aria-hidden="true" className="state-icon" />
         <p className="eyebrow">404</p>
         <h1>页面不存在</h1>
         <p>这个地址没有对应的 Read Along 页面。</p>
-        <Link className="text-link" to="/">
+        <Link className="button-link" to="/">
+          <ArrowLeft aria-hidden="true" />
           返回书架
         </Link>
       </section>

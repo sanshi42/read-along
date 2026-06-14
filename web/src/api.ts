@@ -18,6 +18,11 @@ export interface ReadingProgress {
   updated_at: string;
 }
 
+export interface PlaybackPosition {
+  sentence_index: number;
+  sentence_count: number;
+}
+
 export interface MaterialSummary {
   id: string;
   title: string;
@@ -25,6 +30,7 @@ export interface MaterialSummary {
   updated_at: string;
   primary_source: MaterialSource;
   progress: ReadingProgress | null;
+  playback_position: PlaybackPosition | null;
 }
 
 export interface MaterialDetail extends MaterialSummary {

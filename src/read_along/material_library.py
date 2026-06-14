@@ -26,6 +26,7 @@ from read_along.models import (
     MaterialImportResult,
     MaterialSummary,
     ParagraphDetail,
+    PlaybackPosition,
     ReadingMaterialDraft,
     ReadingProgress,
     Sentence,
@@ -519,10 +520,12 @@ class MaterialLibrary:
         sources = self.repository.list_sources(connection, material.id)
         if not sources or not sources[0].is_primary:
             raise MaterialLibraryError('阅读材料缺少主来源')
+        progress = self.repository.get_progress(connection, material.id)
         return MaterialSummary(
             **material.model_dump(),
             primary_source=sources[0],
-            progress=self.repository.get_progress(connection, material.id),
+            progress=progress,
+            playback_position=self._playback_position(connection, material.id),
         )
 
     def _detail(
@@ -549,7 +552,22 @@ class MaterialLibrary:
             primary_source=sources[0],
             sources=sources,
             progress=self.repository.get_progress(connection, material.id),
+            playback_position=self._playback_position(connection, material.id),
             paragraphs=paragraphs,
+        )
+
+    def _playback_position(
+        self,
+        connection: sqlite3.Connection,
+        material_id: str,
+    ) -> PlaybackPosition | None:
+        position = self.repository.get_playback_position(connection, material_id)
+        if position is None:
+            return None
+        sentence_index, sentence_count = position
+        return PlaybackPosition(
+            sentence_index=sentence_index,
+            sentence_count=sentence_count,
         )
 
     def _cleanup_failed_save(

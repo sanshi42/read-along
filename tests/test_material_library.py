@@ -215,7 +215,34 @@ def test_shelf_and_progress_follow_recent_activity(tmp_path: Path) -> None:
     assert progress.playback_rate == 1.25
     assert [item.id for item in shelf] == [first.material.id, second.material.id]
     assert shelf[0].progress is not None
+    assert shelf[0].playback_position is not None
+    assert shelf[0].playback_position.sentence_index == 1
+    assert shelf[0].playback_position.sentence_count == 1
     assert shelf[0].primary_source.source_uri == 'https://example.com/first'
+
+
+def test_shelf_without_progress_has_no_playback_position(tmp_path: Path) -> None:
+    library, _ = material_library(tmp_path)
+    saved = library.save(url_draft(sentences=('甲。', '乙。', '丙。')))
+
+    shelf = library.list_shelf()
+
+    assert shelf[0].id == saved.material.id
+    assert shelf[0].progress is None
+    assert shelf[0].playback_position is None
+
+
+def test_detail_reports_current_sentence_playback_position(tmp_path: Path) -> None:
+    library, _ = material_library(tmp_path)
+    saved = library.save(url_draft(sentences=('甲。', '乙。', '丙。')))
+    current_sentence = saved.material.paragraphs[0].sentences[1]
+
+    library.save_progress(saved.material.id, current_sentence.id, 1.0)
+    detail = library.get(saved.material.id)
+
+    assert detail.playback_position is not None
+    assert detail.playback_position.sentence_index == 2
+    assert detail.playback_position.sentence_count == 3
 
 
 def test_save_progress_persists_playback_completed_state(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ from read_along.models import (
     MaterialImportResult,
     MaterialSource,
     ParagraphDetail,
+    PlaybackPosition,
     ReadingMaterialDraft,
     ReadingMaterialDraftParagraph,
     ReadingProgress,
@@ -111,6 +112,26 @@ def test_reading_progress_expresses_playback_completed_state() -> None:
     assert progress.playback_completed is True
 
 
+def test_playback_position_requires_positive_sentence_values() -> None:
+    position = PlaybackPosition.model_validate(
+        {
+            'sentence_index': 2,
+            'sentence_count': 3,
+        }
+    )
+
+    assert position.sentence_index == 2
+    assert position.sentence_count == 3
+
+    with pytest.raises(ValidationError):
+        PlaybackPosition.model_validate(
+            {
+                'sentence_index': 0,
+                'sentence_count': 3,
+            }
+        )
+
+
 def test_material_detail_expresses_sentences_nested_by_paragraph() -> None:
     detail = MaterialDetail.model_validate(
         {
@@ -118,6 +139,7 @@ def test_material_detail_expresses_sentences_nested_by_paragraph() -> None:
             'primary_source': source_data(),
             'sources': [source_data()],
             'progress': None,
+            'playback_position': None,
             'paragraphs': [
                 ParagraphDetail(
                     id='paragraph-1',
@@ -142,6 +164,7 @@ def test_material_import_result_expresses_outcome_and_material() -> None:
             'primary_source': source_data(),
             'sources': [source_data()],
             'progress': None,
+            'playback_position': None,
             'paragraphs': [],
         }
     )
@@ -164,6 +187,7 @@ def test_api_material_responses_exclude_internal_audio_path() -> None:
             'primary_source': source_data(),
             'sources': [source_data()],
             'progress': None,
+            'playback_position': None,
             'paragraphs': [
                 {
                     'id': 'paragraph-1',

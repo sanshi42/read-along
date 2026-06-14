@@ -386,6 +386,31 @@ class Repository:
         ).fetchone()
         return _row_model(row, ReadingProgress)
 
+    def get_playback_position(
+        self,
+        connection: sqlite3.Connection,
+        material_id: str,
+    ) -> tuple[int, int] | None:
+        """返回指定材料当前句序号和句子总数。"""
+        row = connection.execute(
+            """
+            SELECT current_sentence."index" AS sentence_index,
+                   COUNT(all_sentences.id) AS sentence_count
+            FROM reading_progress
+            JOIN sentences AS current_sentence
+              ON current_sentence.id = reading_progress.sentence_id
+             AND current_sentence.material_id = reading_progress.material_id
+            JOIN sentences AS all_sentences
+              ON all_sentences.material_id = reading_progress.material_id
+            WHERE reading_progress.material_id = ?
+            GROUP BY current_sentence."index"
+            """,
+            (material_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return int(row['sentence_index']), int(row['sentence_count'])
+
     def delete_material(
         self,
         connection: sqlite3.Connection,
