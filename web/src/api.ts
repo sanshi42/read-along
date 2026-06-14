@@ -100,3 +100,12 @@ export function importUrl(url: string, mode: UrlImportMode = "auto"): Promise<Ma
     body: JSON.stringify({ url, mode }),
   });
 }
+
+export function importPdf(file: File): Promise<MaterialImportResult> {
+  const body = new FormData();
+  body.append("file", file);
+  return request<MaterialImportResult>("/api/import/pdf", {
+    method: "POST",
+    body,
+  });
+}

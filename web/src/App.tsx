@@ -1,5 +1,12 @@
+import { useState } from "react";
 import { BrowserRouter, Link, Route, Routes } from "react-router-dom";
 
+import {
+  applyReadingPreferences,
+  loadReadingPreferences,
+  saveReadingPreferences,
+  type ReadingPreferences,
+} from "./readingPreferences";
 import { ReaderPage } from "./routes/ReaderPage";
 import { ShelfPage } from "./routes/ShelfPage";
 
@@ -19,11 +26,29 @@ function NotFoundPage() {
 }
 
 export default function App() {
+  const [readingPreferences, setReadingPreferences] = useState(loadReadingPreferences);
+  const [readingPreferencesError, setReadingPreferencesError] = useState(false);
+
+  function updateReadingPreferences(preferences: ReadingPreferences) {
+    setReadingPreferences(preferences);
+    applyReadingPreferences(preferences);
+    setReadingPreferencesError(!saveReadingPreferences(preferences));
+  }
+
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<ShelfPage />} />
-        <Route path="/materials/:materialId" element={<ReaderPage />} />
+        <Route
+          path="/materials/:materialId"
+          element={
+            <ReaderPage
+              readingPreferences={readingPreferences}
+              readingPreferencesError={readingPreferencesError}
+              onReadingPreferencesChange={updateReadingPreferences}
+            />
+          }
+        />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>

@@ -1,7 +1,8 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import {
+  importPdf,
   importUrl,
   listMaterials,
   type ImportOutcome,
@@ -9,6 +10,8 @@ import {
   type MaterialSummary,
   type UrlImportMode,
 } from "../api";
+
+type ImportType = "url" | "pdf";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   month: "short",
@@ -33,14 +36,19 @@ function importMessage(outcome: ImportOutcome, title: string) {
 export function ShelfPage() {
   const [materials, setMaterials] = useState<MaterialSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [shelfReloadKey, setShelfReloadKey] = useState(0);
+  const [importType, setImportType] = useState<ImportType>("url");
   const [url, setUrl] = useState("");
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [importMode, setImportMode] = useState<UrlImportMode>("auto");
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<MaterialImportResult | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     let active = true;
+    setError(null);
     listMaterials()
       .then((items) => {
         if (active) {
@@ -55,7 +63,21 @@ export function ShelfPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [shelfReloadKey]);
+
+  function applyImportResult(result: MaterialImportResult) {
+    const imported = result.material;
+    setMaterials((current) => {
+      if (!current) {
+        return [imported];
+      }
+      if (result.outcome === "reused_source") {
+        return current.map((item) => (item.id === imported.id ? imported : item));
+      }
+      return [imported, ...current.filter((item) => item.id !== imported.id)];
+    });
+    setImportResult(result);
+  }
 
   async function handleUrlImport(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -71,23 +93,44 @@ export function ShelfPage() {
     setImportResult(null);
     try {
       const result = await importUrl(nextUrl, importMode);
-      const imported = result.material;
-      setMaterials((current) => {
-        if (!current) {
-          return [imported];
-        }
-        if (result.outcome === "reused_source") {
-          return current.map((item) => (item.id === imported.id ? imported : item));
-        }
-        return [imported, ...current.filter((item) => item.id !== imported.id)];
-      });
+      applyImportResult(result);
       setUrl("");
-      setImportResult(result);
     } catch (reason: unknown) {
       setImportError(reason instanceof Error ? reason.message : "网页导入失败");
     } finally {
       setImporting(false);
     }
+  }
+
+  async function handlePdfImport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!pdfFile) {
+      setImportError("请选择文本型 PDF 文件");
+      setImportResult(null);
+      return;
+    }
+
+    setImporting(true);
+    setImportError(null);
+    setImportResult(null);
+    try {
+      const result = await importPdf(pdfFile);
+      applyImportResult(result);
+      setPdfFile(null);
+      if (pdfInputRef.current) {
+        pdfInputRef.current.value = "";
+      }
+    } catch (reason: unknown) {
+      setImportError(reason instanceof Error ? reason.message : "PDF 导入失败");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function selectImportType(type: ImportType) {
+    setImportType(type);
+    setImportError(null);
+    setImportResult(null);
   }
 
   return (
@@ -107,65 +150,103 @@ export function ShelfPage() {
       <section className="import-band" aria-labelledby="url-import-heading">
         <div>
           <p className="eyebrow">导入</p>
-          <h2 id="url-import-heading">网页导入</h2>
+          <h2 id="url-import-heading">{importType === "url" ? "网页导入" : "PDF 导入"}</h2>
         </div>
-        <form className="url-import-form" onSubmit={handleUrlImport}>
-          <fieldset className="import-mode-control">
-            <legend>导入方式</legend>
+        <div className="import-workspace">
+          <fieldset className="import-type-control">
+            <legend>材料类型</legend>
             <div className="import-mode-options">
               <label className="import-mode-option">
                 <input
                   type="radio"
-                  name="import-mode"
-                  value="auto"
-                  checked={importMode === "auto"}
+                  name="import-type"
+                  value="url"
+                  checked={importType === "url"}
                   disabled={importing}
-                  onChange={() => setImportMode("auto")}
+                  onChange={() => selectImportType("url")}
                 />
-                <span>公开网页</span>
+                <span>网页</span>
               </label>
               <label className="import-mode-option">
                 <input
                   type="radio"
-                  name="import-mode"
-                  value="chrome"
-                  checked={importMode === "chrome"}
+                  name="import-type"
+                  value="pdf"
+                  checked={importType === "pdf"}
                   disabled={importing}
-                  onChange={() => setImportMode("chrome")}
+                  onChange={() => selectImportType("pdf")}
                 />
-                <span>已登录 Chrome</span>
+                <span>文本型 PDF</span>
               </label>
             </div>
           </fieldset>
-          <label htmlFor="url-input">网页 URL</label>
-          <div className="url-import-row">
-            <input
-              id="url-input"
-              type="url"
-              inputMode="url"
-              placeholder="https://example.com/article"
-              value={url}
-              disabled={importing}
-              onChange={(event) => setUrl(event.target.value)}
-            />
-            <button type="submit" disabled={importing}>
-              {importing ? "导入中" : importMode === "chrome" ? "从 Chrome 导入" : "导入"}
-            </button>
-          </div>
-          {importError ? (
-            <p className="import-feedback import-feedback-error" role="alert">
-              {importError}
-            </p>
-          ) : null}
-          {importResult ? (
-            <p className="import-feedback" aria-live="polite">
-              {importMessage(importResult.outcome, importResult.material.title)}{" "}
-              <Link className="import-feedback-link" to={`/materials/${importResult.material.id}`}>
-                打开阅读页
-              </Link>
-            </p>
-          ) : null}
-        </form>
+          {importType === "url" ? (
+            <form className="url-import-form" onSubmit={handleUrlImport}>
+              <fieldset className="import-mode-control">
+                <legend>读取方式</legend>
+                <div className="import-mode-options">
+                  <label className="import-mode-option">
+                    <input
+                      type="radio"
+                      name="import-mode"
+                      value="auto"
+                      checked={importMode === "auto"}
+                      disabled={importing}
+                      onChange={() => setImportMode("auto")}
+                    />
+                    <span>公开网页</span>
+                  </label>
+                  <label className="import-mode-option">
+                    <input
+                      type="radio"
+                      name="import-mode"
+                      value="chrome"
+                      checked={importMode === "chrome"}
+                      disabled={importing}
+                      onChange={() => setImportMode("chrome")}
+                    />
+                    <span>已登录 Chrome</span>
+                  </label>
+                </div>
+              </fieldset>
+              <label htmlFor="url-input">网页 URL</label>
+              <div className="url-import-row">
+                <input
+                  id="url-input"
+                  type="url"
+                  inputMode="url"
+                  placeholder="https://example.com/article"
+                  value={url}
+                  disabled={importing}
+                  onChange={(event) => setUrl(event.target.value)}
+                />
+                <button type="submit" disabled={importing}>
+                  {importing ? "导入中" : importMode === "chrome" ? "从 Chrome 导入" : "导入"}
+                </button>
+              </div>
+              <ImportFeedback error={importError} result={importResult} />
+            </form>
+          ) : (
+            <form className="url-import-form" onSubmit={handlePdfImport}>
+              <label htmlFor="pdf-input">文本型 PDF 文件</label>
+              <div className="url-import-row">
+                <input
+                  ref={pdfInputRef}
+                  id="pdf-input"
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  disabled={importing}
+                  onChange={(event) => setPdfFile(event.target.files?.[0] ?? null)}
+                />
+                <button type="submit" disabled={importing}>
+                  {importing ? "导入中" : "导入 PDF"}
+                </button>
+              </div>
+              <p className="import-hint">仅支持包含可提取文字的 PDF，不支持扫描版 OCR。</p>
+              <ImportFeedback error={importError} result={importResult} />
+            </form>
+          )}
+        </div>
       </section>
 
       <section aria-labelledby="shelf-heading">
@@ -183,6 +264,13 @@ export function ShelfPage() {
             <h2>暂时无法读取书架</h2>
             <p>{error}</p>
             <p className="state-hint">请确认本地 Read Along 后端已启动，然后刷新页面。</p>
+            <button
+              className="state-action"
+              type="button"
+              onClick={() => setShelfReloadKey((current) => current + 1)}
+            >
+              重试读取
+            </button>
           </section>
         ) : null}
 
@@ -224,4 +312,31 @@ export function ShelfPage() {
       </section>
     </main>
   );
+}
+
+function ImportFeedback({
+  error,
+  result,
+}: {
+  error: string | null;
+  result: MaterialImportResult | null;
+}) {
+  if (error) {
+    return (
+      <p className="import-feedback import-feedback-error" role="alert">
+        {error}
+      </p>
+    );
+  }
+  if (result) {
+    return (
+      <p className="import-feedback" aria-live="polite">
+        {importMessage(result.outcome, result.material.title)}{" "}
+        <Link className="import-feedback-link" to={`/materials/${result.material.id}`}>
+          打开阅读页
+        </Link>
+      </p>
+    );
+  }
+  return null;
 }

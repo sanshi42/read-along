@@ -8,6 +8,12 @@ import {
   type MaterialDetail,
   type ReadingProgress,
 } from "../api";
+import {
+  type FontSizePreference,
+  type LineHeightPreference,
+  type ReadingPreferences,
+  type ThemePreference,
+} from "../readingPreferences";
 
 type PlaybackStatus = "idle" | "loading" | "playing" | "paused";
 type ProgressInput = Pick<
@@ -18,11 +24,21 @@ type ProgressInput = Pick<
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2] as const;
 const SCROLL_KEYS = new Set(["ArrowDown", "ArrowUp", "End", "Home", "PageDown", "PageUp", " "]);
 
+interface ReaderPageProps {
+  readingPreferences: ReadingPreferences;
+  readingPreferencesError: boolean;
+  onReadingPreferencesChange: (preferences: ReadingPreferences) => void;
+}
+
 function sourceLabel(material: MaterialDetail) {
   return material.primary_source.source_type === "pdf" ? "文本型 PDF" : "网页";
 }
 
-export function ReaderPage() {
+export function ReaderPage({
+  readingPreferences,
+  readingPreferencesError,
+  onReadingPreferencesChange,
+}: ReaderPageProps) {
   const { materialId } = useParams();
   const [material, setMaterial] = useState<MaterialDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +49,8 @@ export function ReaderPage() {
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [progressError, setProgressError] = useState<string | null>(null);
   const [showReturnToCurrent, setShowReturnToCurrent] = useState(false);
+  const [showReadingPreferences, setShowReadingPreferences] = useState(false);
+  const [materialReloadKey, setMaterialReloadKey] = useState(0);
   const currentSentenceIdRef = useRef<string | null>(null);
   const playbackRateRef = useRef(1);
   const playbackCompletedRef = useRef(false);
@@ -46,6 +64,7 @@ export function ReaderPage() {
   const progressGenerationRef = useRef(0);
   const followCurrentRef = useRef(true);
   const userScrollIntentUntilRef = useRef(0);
+  const readingPreferencesRef = useRef<HTMLDivElement | null>(null);
 
   const sentences = useMemo(
     () => material?.paragraphs.flatMap((paragraph) => paragraph.sentences) ?? [],
@@ -110,7 +129,7 @@ export function ReaderPage() {
     return () => {
       active = false;
     };
-  }, [materialId]);
+  }, [materialId, materialReloadKey]);
 
   useEffect(() => {
     function recordUserScrollIntent() {
@@ -147,6 +166,34 @@ export function ReaderPage() {
       window.removeEventListener("resize", updateReturnToCurrent);
     };
   }, []);
+
+  useEffect(() => {
+    if (!showReadingPreferences) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (
+        readingPreferencesRef.current &&
+        !readingPreferencesRef.current.contains(event.target as Node)
+      ) {
+        setShowReadingPreferences(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setShowReadingPreferences(false);
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showReadingPreferences]);
 
   useEffect(() => {
     return () => {
@@ -441,6 +488,16 @@ export function ReaderPage() {
     scheduleScrollToCurrent("auto");
   }
 
+  function updateReadingPreference<Key extends keyof ReadingPreferences>(
+    key: Key,
+    value: ReadingPreferences[Key],
+  ) {
+    onReadingPreferencesChange({
+      ...readingPreferences,
+      [key]: value,
+    });
+  }
+
   const playbackLabel =
     playbackStatus === "loading"
       ? "正在准备音频"
@@ -458,7 +515,61 @@ export function ReaderPage() {
         <Link className="text-link" to="/">
           ← 返回书架
         </Link>
-        <span>Read Along</span>
+        <div className="reader-nav-actions" ref={readingPreferencesRef}>
+          <span>Read Along</span>
+          <button
+            className="reader-settings-trigger"
+            type="button"
+            aria-expanded={showReadingPreferences}
+            aria-controls="reading-preferences-panel"
+            onClick={() => setShowReadingPreferences((current) => !current)}
+          >
+            阅读设置
+          </button>
+          {showReadingPreferences ? (
+            <div
+              id="reading-preferences-panel"
+              className="reading-preferences-panel"
+              aria-label="阅读设置"
+            >
+              <PreferenceOptions<FontSizePreference>
+                label="字号"
+                value={readingPreferences.fontSize}
+                options={[
+                  ["small", "小"],
+                  ["standard", "标准"],
+                  ["large", "大"],
+                ]}
+                onChange={(value) => updateReadingPreference("fontSize", value)}
+              />
+              <PreferenceOptions<LineHeightPreference>
+                label="行距"
+                value={readingPreferences.lineHeight}
+                options={[
+                  ["compact", "紧凑"],
+                  ["standard", "标准"],
+                  ["relaxed", "宽松"],
+                ]}
+                onChange={(value) => updateReadingPreference("lineHeight", value)}
+              />
+              <PreferenceOptions<ThemePreference>
+                label="主题"
+                value={readingPreferences.theme}
+                options={[
+                  ["system", "跟随系统"],
+                  ["light", "浅色"],
+                  ["dark", "深色"],
+                ]}
+                onChange={(value) => updateReadingPreference("theme", value)}
+              />
+              {readingPreferencesError ? (
+                <p className="reading-preferences-error" role="alert">
+                  设置已应用，但无法保存到浏览器。
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       </nav>
 
       {error ? (
@@ -466,6 +577,13 @@ export function ReaderPage() {
           <p className="eyebrow">无法打开材料</p>
           <h1>阅读页加载失败</h1>
           <p>{error}</p>
+          <button
+            className="state-action"
+            type="button"
+            onClick={() => setMaterialReloadKey((current) => current + 1)}
+          >
+            重试打开
+          </button>
         </section>
       ) : null}
 
@@ -535,6 +653,9 @@ export function ReaderPage() {
             {playbackError ? (
               <span className="player-error" role="alert">
                 {playbackError}
+                <button className="inline-action" type="button" onClick={handlePlayPause}>
+                  重试
+                </button>
               </span>
             ) : null}
             {progressError ? (
@@ -600,5 +721,39 @@ export function ReaderPage() {
         </section>
       ) : null}
     </main>
+  );
+}
+
+interface PreferenceOptionsProps<Value extends string> {
+  label: string;
+  value: Value;
+  options: Array<[Value, string]>;
+  onChange: (value: Value) => void;
+}
+
+function PreferenceOptions<Value extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: PreferenceOptionsProps<Value>) {
+  return (
+    <fieldset className="reading-preference-group">
+      <legend>{label}</legend>
+      <div className="reading-preference-options">
+        {options.map(([optionValue, optionLabel]) => (
+          <label key={optionValue}>
+            <input
+              type="radio"
+              name={`reading-preference-${label}`}
+              value={optionValue}
+              checked={value === optionValue}
+              onChange={() => onChange(optionValue)}
+            />
+            <span>{optionLabel}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
   );
 }
