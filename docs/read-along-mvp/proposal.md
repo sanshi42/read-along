@@ -1,3 +1,9 @@
+---
+status: done
+priority: P2
+created: 2026-06-13
+---
+
 # Read Along MVP Proposal
 
 ## Goal
