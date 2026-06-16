@@ -29,6 +29,7 @@ import {
 import {
   isRectFullyVisibleWithinReaderChrome,
   normalizeReadingTitle,
+  sentencePointerAction,
   scrollTargetForRectWithinReaderChrome,
   shouldShowReaderNavContext,
 } from "./readerPageViewModel";
@@ -483,6 +484,15 @@ export function ReaderPage({
     handleSentenceChange(sentenceId);
   }
 
+  function handleSentencePointer(sentenceId: string, clickCount: number) {
+    if (sentencePointerAction(clickCount) === "play") {
+      followCurrentRef.current = true;
+      void playSentence(sentenceId, true);
+      return;
+    }
+    handleSentenceClick(sentenceId);
+  }
+
   function handlePlaybackRateChange(rate: number) {
     playbackRateRef.current = rate;
     setPlaybackRate(rate);
@@ -753,7 +763,7 @@ export function ReaderPage({
                         ]
                           .filter(Boolean)
                           .join(" ")}
-                        onClick={() => handleSentenceClick(sentence.id)}
+                        onClick={(event) => handleSentencePointer(sentence.id, event.detail)}
                       >
                         {sentence.text}
                       </span>

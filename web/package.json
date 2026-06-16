@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
-    "test": "node --test --experimental-strip-types test/readerPageViewModel.test.ts",
+    "test": "node --test --experimental-strip-types test/*.test.ts",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {

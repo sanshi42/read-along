@@ -98,6 +98,32 @@ def test_generate_creates_private_pcm_wav_from_standard_input(
     assert list(tmp_path.glob('.sentence.*.wav')) == []
 
 
+def test_generate_normalizes_book_title_marks_before_running_say(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = executable(tmp_path)
+    output_path = tmp_path / 'sentence.wav'
+    captured: dict[str, object] = {}
+
+    def fake_run(
+        args: list[str],
+        *,
+        input: str,
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        captured['input'] = input
+        write_wav(Path(args[2]))
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
+
+    monkeypatch.setattr(tts.sys, 'platform', 'darwin')
+    monkeypatch.setattr(tts.subprocess, 'run', fake_run)
+
+    MacOSSayTTS(command=command).generate('演过《奋斗》里的华子。', output_path)
+
+    assert captured['input'] == '演过 奋斗 里的华子。'
+
+
 @pytest.mark.parametrize('timeout', [0, -1, math.inf, math.nan])
 def test_constructor_rejects_invalid_timeout(timeout: float) -> None:
     with pytest.raises(ValueError, match='TTS 生成超时必须是大于零的有限数值'):

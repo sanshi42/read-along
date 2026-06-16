@@ -14,8 +14,14 @@ export interface ReaderNavContextInput {
   navBottom: number;
 }
 
+export type SentencePointerAction = "select" | "play";
+
 export function normalizeReadingTitle(title: string): string {
   return title.replace(/\.pdf$/i, "").trim();
+}
+
+export function sentencePointerAction(clickCount: number): SentencePointerAction {
+  return clickCount >= 2 ? "play" : "select";
 }
 
 export function shouldShowReaderNavContext({

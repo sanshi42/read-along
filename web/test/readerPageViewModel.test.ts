@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   isRectFullyVisibleWithinReaderChrome,
   normalizeReadingTitle,
+  sentencePointerAction,
   scrollTargetForRectWithinReaderChrome,
   shouldShowReaderNavContext,
 } from "../src/routes/readerPageViewModel.ts";
@@ -42,4 +43,9 @@ test("scrollTargetForRectWithinReaderChrome centers short sentences in the reada
   );
 
   assert.equal(Math.round(target), 2744);
+});
+
+test("sentencePointerAction keeps single click for selecting and double click for playback", () => {
+  assert.equal(sentencePointerAction(1), "select");
+  assert.equal(sentencePointerAction(2), "play");
 });

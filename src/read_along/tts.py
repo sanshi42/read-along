@@ -10,6 +10,7 @@ from tempfile import NamedTemporaryFile
 
 DIAGNOSTIC_LIMIT = 500
 WAV_HEADER_SIZE = 12
+TTS_INPUT_TRANSLATION = str.maketrans({'《': ' ', '》': ' '})
 
 
 class TTSGenerationError(RuntimeError):
@@ -79,6 +80,7 @@ class MacOSSayTTS:
             raise TTSGenerationError('无法创建临时音频文件。') from exc
 
     def _run_say(self, command: Path, text: str, temporary_path: Path) -> None:
+        tts_input = _normalize_tts_input(text)
         args = [
             str(command),
             '--output-file',
@@ -90,7 +92,7 @@ class MacOSSayTTS:
         try:
             subprocess.run(
                 args,
-                input=text,
+                input=tts_input,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -101,6 +103,8 @@ class MacOSSayTTS:
             raise TTSGenerationError('macOS say 生成音频超时。') from exc
         except subprocess.CalledProcessError as exc:
             detail = _clean_diagnostic(exc.stderr, sensitive_text=text)
+            if tts_input != text:
+                detail = _clean_diagnostic(detail, sensitive_text=tts_input)
             message = f'macOS say 生成音频失败：{detail}' if detail else 'macOS say 生成音频失败。'
             raise TTSGenerationError(message) from exc
         except FileNotFoundError as exc:
@@ -143,3 +147,7 @@ def _clean_diagnostic(stderr: str | None, *, sensitive_text: str) -> str:
     if len(diagnostic) <= DIAGNOSTIC_LIMIT:
         return diagnostic
     return f'{diagnostic[: DIAGNOSTIC_LIMIT - 1]}…'
+
+
+def _normalize_tts_input(text: str) -> str:
+    return text.translate(TTS_INPUT_TRANSLATION)

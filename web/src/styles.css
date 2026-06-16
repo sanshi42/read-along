@@ -574,12 +574,11 @@ select:disabled {
 
 .material-row {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) max-content;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  gap: 10px;
   align-items: center;
   padding: 22px 4px;
   border-bottom: 1px solid var(--color-border);
-  text-decoration: none;
   transition:
     background-color var(--transition-fast),
     padding var(--transition-fast);
@@ -590,6 +589,26 @@ select:disabled {
   padding-right: 14px;
   padding-left: 14px;
   background: var(--color-surface);
+}
+
+.material-row-open {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 48px minmax(0, 1fr) max-content;
+  gap: 18px;
+  align-items: center;
+  text-decoration: none;
+}
+
+.material-delete-button {
+  border-color: transparent;
+  color: var(--color-text-subtle);
+}
+
+.material-delete-button:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  color: var(--color-error);
+  background: var(--color-error-soft);
 }
 
 .material-source-icon {
@@ -1221,6 +1240,10 @@ select:disabled {
   }
 
   .material-row {
+    grid-template-columns: minmax(0, 1fr) 44px;
+  }
+
+  .material-row-open {
     grid-template-columns: 44px minmax(0, 1fr);
   }
 

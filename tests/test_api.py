@@ -101,6 +101,23 @@ def test_material_detail_returns_chinese_not_found_error(tmp_path: Path) -> None
     assert response.json() == {'detail': '阅读材料不存在：mat_missing'}
 
 
+def test_delete_material_endpoint_removes_saved_material_idempotently(tmp_path: Path) -> None:
+    library = _make_library(tmp_path)
+    material = _save_url_material(library)
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+
+    first = client.delete(f'/api/materials/{material.material.id}')
+    second = client.delete(f'/api/materials/{material.material.id}')
+
+    assert first.status_code == 204
+    assert first.content == b''
+    assert second.status_code == 204
+    assert client.get(f'/api/materials/{material.material.id}').status_code == 404
+    assert client.get('/api/materials').json() == []
+
+
 def test_progress_endpoint_saves_current_sentence_rate_and_completion(tmp_path: Path) -> None:
     library = _make_library(tmp_path)
     material = _save_url_material(library)

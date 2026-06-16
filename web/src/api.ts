@@ -72,12 +72,34 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function requestWithoutBody(path: string, options?: RequestInit): Promise<void> {
+  const response = await fetch(path, options);
+  if (!response.ok) {
+    let message = `请求失败（${response.status}）`;
+    try {
+      const body = (await response.json()) as { detail?: string };
+      if (body.detail) {
+        message = body.detail;
+      }
+    } catch {
+      // 响应不是 JSON 时保留状态码错误信息
+    }
+    throw new Error(message);
+  }
+}
+
 export function listMaterials(): Promise<MaterialSummary[]> {
   return request<MaterialSummary[]>("/api/materials");
 }
 
 export function getMaterial(materialId: string): Promise<MaterialDetail> {
   return request<MaterialDetail>(`/api/materials/${encodeURIComponent(materialId)}`);
+}
+
+export function deleteMaterial(materialId: string): Promise<void> {
+  return requestWithoutBody(`/api/materials/${encodeURIComponent(materialId)}`, {
+    method: "DELETE",
+  });
 }
 
 export function sentenceAudioUrl(materialId: string, sentenceId: string): string {

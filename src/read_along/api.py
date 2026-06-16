@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
 
-from fastapi import Depends, FastAPI, UploadFile
+from fastapi import Depends, FastAPI, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -121,6 +121,15 @@ def create_app() -> FastAPI:
                 status_code=404,
                 content={'detail': str(exc)},
             )
+
+    @app.delete('/api/materials/{material_id}', status_code=204)
+    def delete_material(
+        material_id: str,
+        *,
+        library: MaterialLibrary = Depends(get_material_library),
+    ) -> Response:
+        library.delete(material_id)
+        return Response(status_code=204)
 
     @app.get('/api/materials/{material_id}/sentences/{sentence_id}/audio')
     def get_sentence_audio(

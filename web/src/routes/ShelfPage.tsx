@@ -6,11 +6,13 @@ import {
   Import,
   LoaderCircle,
   LockKeyhole,
+  Trash2,
 } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import {
+  deleteMaterial,
   importPdf,
   importUrl,
   listMaterials,
@@ -19,6 +21,7 @@ import {
   type MaterialSummary,
   type UrlImportMode,
 } from "../api";
+import { removeMaterialFromList } from "./shelfPageViewModel";
 
 type ImportType = "url" | "pdf";
 
@@ -75,6 +78,8 @@ export function ShelfPage() {
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<MaterialImportResult | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletingMaterialId, setDeletingMaterialId] = useState<string | null>(null);
   const pdfInputRef = useRef<HTMLInputElement | null>(null);
   const importExpanded = showImport ?? false;
 
@@ -100,6 +105,7 @@ export function ShelfPage() {
 
   function applyImportResult(result: MaterialImportResult) {
     const imported = result.material;
+    setDeleteError(null);
     setMaterials((current) => {
       if (!current) {
         return [imported];
@@ -165,6 +171,27 @@ export function ShelfPage() {
     setImportType(type);
     setImportError(null);
     setImportResult(null);
+  }
+
+  async function handleMaterialDelete(material: MaterialSummary) {
+    const confirmed = window.confirm(
+      `删除《${material.title}》？此操作会移除本地正文、阅读进度和音频缓存。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingMaterialId(material.id);
+    setDeleteError(null);
+    try {
+      await deleteMaterial(material.id);
+      setMaterials((current) => removeMaterialFromList(current, material.id));
+      setImportResult((current) => (current?.material.id === material.id ? null : current));
+    } catch (reason: unknown) {
+      setDeleteError(reason instanceof Error ? reason.message : "删除阅读材料失败");
+    } finally {
+      setDeletingMaterialId(null);
+    }
   }
 
   return (
@@ -351,6 +378,12 @@ export function ShelfPage() {
 
         {!error && materials === null ? <ShelfSkeleton /> : null}
 
+        {!error && deleteError ? (
+          <p className="feedback feedback-error" role="alert">
+            {deleteError}
+          </p>
+        ) : null}
+
         {!error && materials?.length === 0 ? (
           <section className="state-panel state-panel-centered">
             <BookOpenText aria-hidden="true" className="state-icon" />
@@ -363,7 +396,12 @@ export function ShelfPage() {
         {!error && materials && materials.length > 0 ? (
           <div className="material-list">
             {materials.map((material) => (
-              <MaterialRow key={material.id} material={material} />
+              <MaterialRow
+                key={material.id}
+                material={material}
+                deleting={deletingMaterialId === material.id}
+                onDelete={handleMaterialDelete}
+              />
             ))}
           </div>
         ) : null}
@@ -372,40 +410,58 @@ export function ShelfPage() {
   );
 }
 
-function MaterialRow({ material }: { material: MaterialSummary }) {
+interface MaterialRowProps {
+  material: MaterialSummary;
+  deleting: boolean;
+  onDelete: (material: MaterialSummary) => void;
+}
+
+function MaterialRow({ material, deleting, onDelete }: MaterialRowProps) {
   const percentage = playbackPercentage(material);
   const position = material.playback_position;
   const completed = material.progress?.playback_completed ?? false;
   return (
-    <Link className="material-row" to={`/materials/${material.id}`}>
-      <div className="material-source-icon" aria-hidden="true">
-        {material.primary_source.source_type === "pdf" ? <FileText /> : <Globe2 />}
-      </div>
-      <div className="material-row-main">
-        <div className="material-row-meta">
-          <span>{sourceLabel(material)}</span>
-          <span aria-hidden="true">·</span>
-          <time dateTime={material.updated_at}>{dateFormatter.format(new Date(material.updated_at))}</time>
+    <div className="material-row">
+      <Link className="material-row-open" to={`/materials/${material.id}`}>
+        <div className="material-source-icon" aria-hidden="true">
+          {material.primary_source.source_type === "pdf" ? <FileText /> : <Globe2 />}
         </div>
-        <h3>{material.title}</h3>
-        <p className="source-uri">{material.primary_source.source_uri}</p>
-        {percentage !== null && position ? (
-          <div className="playback-position">
-            <span className="position-track" aria-hidden="true">
-              <span style={{ width: `${percentage}%` }} />
-            </span>
-            <span>
-              {completed
-                ? "朗读完成"
-                : `朗读位置 ${percentage}% · 第 ${position.sentence_index} / ${position.sentence_count} 句`}
-            </span>
+        <div className="material-row-main">
+          <div className="material-row-meta">
+            <span>{sourceLabel(material)}</span>
+            <span aria-hidden="true">·</span>
+            <time dateTime={material.updated_at}>{dateFormatter.format(new Date(material.updated_at))}</time>
           </div>
-        ) : (
-          <p className="material-new">尚未开始朗读</p>
-        )}
-      </div>
-      <span className="material-row-action">{materialActionLabel(material)}</span>
-    </Link>
+          <h3>{material.title}</h3>
+          <p className="source-uri">{material.primary_source.source_uri}</p>
+          {percentage !== null && position ? (
+            <div className="playback-position">
+              <span className="position-track" aria-hidden="true">
+                <span style={{ width: `${percentage}%` }} />
+              </span>
+              <span>
+                {completed
+                  ? "朗读完成"
+                  : `朗读位置 ${percentage}% · 第 ${position.sentence_index} / ${position.sentence_count} 句`}
+              </span>
+            </div>
+          ) : (
+            <p className="material-new">尚未开始朗读</p>
+          )}
+        </div>
+        <span className="material-row-action">{materialActionLabel(material)}</span>
+      </Link>
+      <button
+        className="icon-button material-delete-button"
+        type="button"
+        disabled={deleting}
+        aria-label={`删除${material.title}`}
+        title="删除阅读材料"
+        onClick={() => onDelete(material)}
+      >
+        {deleting ? <LoaderCircle aria-hidden="true" className="spin" /> : <Trash2 aria-hidden="true" />}
+      </button>
+    </div>
   );
 }
 
