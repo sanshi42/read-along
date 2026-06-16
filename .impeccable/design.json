@@ -1,0 +1,176 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-15T15:19:09Z",
+  "title": "Design System: Read Along",
+  "extensions": {
+    "colorMeta": {
+      "canvas": {
+        "role": "neutral",
+        "displayName": "暖纸画布",
+        "canonical": "#f3eee4",
+        "tonalRamp": ["#ffffff", "#fbf8f1", "#f3eee4", "#eee7da", "#d8cfc0"]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "炭墨正文",
+        "canonical": "#27231d",
+        "tonalRamp": ["#746b60", "#696258", "#27231d", "#211f1a", "#171612"]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "书桌棕",
+        "canonical": "#805127",
+        "tonalRamp": ["#ead9c2", "#d09a63", "#805127", "#633b1b", "#493722"]
+      },
+      "highlight": {
+        "role": "tertiary",
+        "displayName": "柔和荧光笔",
+        "canonical": "#ead4a4",
+        "tonalRamp": ["#fffaf1", "#ead4a4", "#e5b96a", "#795522", "#5b4828"]
+      },
+      "success": {
+        "role": "semantic",
+        "displayName": "沉静成功绿",
+        "canonical": "#35613e",
+        "tonalRamp": ["#dce9db", "#9bc69e", "#35613e", "#243c29"]
+      },
+      "error": {
+        "role": "semantic",
+        "displayName": "克制错误红",
+        "canonical": "#9b3d32",
+        "tonalRamp": ["#f1ded8", "#efa096", "#9b3d32", "#492b28"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "材料标题",
+        "purpose": "阅读材料的唯一主标题，使用系统宋体建立书页感。"
+      },
+      "headline": {
+        "displayName": "页面标题",
+        "purpose": "页面和主要区块标题。"
+      },
+      "title": {
+        "displayName": "材料名称",
+        "purpose": "材料列表和面板中的内容标题。"
+      },
+      "body": {
+        "displayName": "阅读正文",
+        "purpose": "长时间阅读的核心正文，可由用户调整字号与行距。"
+      },
+      "label": {
+        "displayName": "界面标签",
+        "purpose": "按钮、设置、状态和来源信息。"
+      }
+    },
+    "shadows": [
+      {
+        "name": "popover",
+        "value": "0 16px 40px rgba(61, 49, 34, 0.16)",
+        "purpose": "只用于阅读偏好等临时浮层。"
+      },
+      {
+        "name": "dock",
+        "value": "0 12px 32px rgba(61, 49, 34, 0.18)",
+        "purpose": "只用于固定在正文上方的底部播放器。"
+      }
+    ],
+    "motion": [
+      {
+        "name": "fast",
+        "value": "160ms ease",
+        "purpose": "按钮、颜色、边框和轻量状态反馈。"
+      },
+      {
+        "name": "base",
+        "value": "210ms ease",
+        "purpose": "面板展开、弹层出现和图标旋转。"
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0.01ms",
+        "purpose": "减少动态效果偏好下的近乎即时替代。"
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact",
+        "value": "760px"
+      },
+      {
+        "name": "narrow",
+        "value": "520px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "页面或控制组中的唯一主要动作。",
+      "html": "<button class=\"ds-button-primary\">导入材料</button>",
+      "css": ".ds-button-primary { min-height: 44px; padding: 0 15px; border: 1px solid var(--color-accent); border-radius: var(--radius-md); color: var(--color-accent-contrast); background: var(--color-accent); font: 700 0.84rem/1.5 var(--font-ui); cursor: pointer; transition: background-color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast); } .ds-button-primary:hover { border-color: var(--color-accent-hover); background: var(--color-accent-hover); } .ds-button-primary:active { transform: scale(0.97); } .ds-button-primary:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-focus) 38%, transparent); outline-offset: 3px; }"
+    },
+    {
+      "name": "Material Row",
+      "kind": "custom",
+      "description": "书架中的阅读材料入口，使用分隔行而不是卡片网格。",
+      "html": "<a class=\"ds-material-row\" href=\"#\"><span class=\"ds-material-icon\" aria-hidden=\"true\">文</span><span><small>网页 · 今天</small><strong>一篇适合继续阅读的材料</strong><em>上次朗读到第 12 句</em></span><b>继续阅读</b></a>",
+      "css": ".ds-material-row { display: grid; grid-template-columns: 48px minmax(0, 1fr) max-content; gap: 18px; align-items: center; padding: 22px 4px; border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); color: var(--color-text); text-decoration: none; font-family: var(--font-ui); } .ds-material-row > span:nth-child(2) { display: grid; gap: 7px; min-width: 0; } .ds-material-row small, .ds-material-row em { color: var(--color-text-subtle); font-size: 0.72rem; font-style: normal; } .ds-material-row strong { font: 600 1.35rem/1.35 var(--font-editorial); } .ds-material-row b { color: var(--color-accent); font-size: 0.8rem; } .ds-material-icon { display: grid; width: 44px; height: 52px; place-items: center; border: 1px solid var(--color-border-strong); border-radius: 4px 10px 10px 4px; color: var(--color-accent); background: var(--color-surface); }"
+    },
+    {
+      "name": "Playing Sentence",
+      "kind": "custom",
+      "description": "当前正在朗读的句子，颜色与下划线共同表达状态。",
+      "html": "<span class=\"ds-playing-sentence\" tabindex=\"0\">正在朗读的句子会保持清晰、稳定，并且不只依赖颜色表达状态。</span>",
+      "css": ".ds-playing-sentence { border-radius: 2px; color: var(--color-text); background: var(--color-highlight-strong); box-shadow: 4px 0 0 var(--color-highlight-strong), -4px 0 0 var(--color-highlight-strong); font: 400 1.18rem/2 var(--font-editorial); text-decoration: underline; text-decoration-color: var(--color-accent); text-decoration-thickness: 2px; text-underline-offset: 0.2em; } .ds-playing-sentence:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-focus) 42%, transparent); outline-offset: 3px; }"
+    },
+    {
+      "name": "Player Dock",
+      "kind": "custom",
+      "description": "常驻但克制的音文播放控制。",
+      "html": "<div class=\"ds-player\"><span><strong>第 12 / 86 句</strong><small>正在朗读</small></span><div><button aria-label=\"上一句\">‹</button><button class=\"ds-player-main\" aria-label=\"暂停\">Ⅱ</button><button aria-label=\"下一句\">›</button><select aria-label=\"播放倍速\"><option>1×</option></select></div></div>",
+      "css": ".ds-player { display: flex; min-width: 560px; align-items: center; justify-content: space-between; gap: 18px; padding: 12px 12px 12px 18px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-lg); color: var(--color-text); background: var(--color-surface-strong); box-shadow: var(--shadow-dock); font-family: var(--font-ui); } .ds-player > span { display: grid; gap: 3px; } .ds-player small { color: var(--color-text-muted); } .ds-player > div { display: flex; gap: 7px; align-items: center; } .ds-player button, .ds-player select { min-width: 44px; min-height: 44px; border: 1px solid var(--color-border); border-radius: var(--radius-md); color: var(--color-text); background: var(--color-surface); } .ds-player .ds-player-main { width: 50px; height: 50px; border-radius: 999px; border-color: var(--color-accent); color: var(--color-accent-contrast); background: var(--color-accent); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "静读书房",
+    "overview": "Read Along 像一间只为一个人准备的安静书房：正文首先出现，控制随手可得但不争夺注意力。系统以暖纸张浅色、炭黑夜读、系统宋体正文和克制的棕色功能强调支持长时间音文阅读。",
+    "keyCharacteristics": [
+      "正文始终是最强视觉层级",
+      "宋体正文与黑体控制分工明确",
+      "浅色与深色主题成对设计",
+      "阴影只用于弹层和播放器",
+      "关键状态不只依赖颜色"
+    ],
+    "rules": [
+      {
+        "name": "强调色稀缺规则",
+        "body": "书桌棕只用于动作、选择、焦点和状态，不用于装饰大片区域。",
+        "section": "colors"
+      },
+      {
+        "name": "长读优先规则",
+        "body": "正文字号、行距、行宽和对比度优先服务持续阅读。",
+        "section": "typography"
+      },
+      {
+        "name": "默认无阴影规则",
+        "body": "静态面板、材料列表、按钮和输入依靠背景与边框表达结构。",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "让正文保持约 43rem 的舒适行宽，并提供字号、行距和主题偏好。",
+      "为主要交互提供至少 44px 的目标尺寸、完整键盘操作和清晰焦点。",
+      "同时用文字、图标、下划线或结构变化表达关键状态。"
+    ],
+    "donts": [
+      "不要把界面做成企业 SaaS 仪表盘。",
+      "不要使用大量玻璃效果、装饰性渐变或分散正文注意力的动效。",
+      "不要增加课程目录、留言、推广或其他复杂外围信息。",
+      "不要只依赖颜色表达播放、选择、错误或完成状态。"
+    ]
+  }
+}

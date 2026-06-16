@@ -1,4 +1,4 @@
-.PHONY: setup dev dev-api dev-web check format format-check lint typecheck test build hooks pre-commit
+.PHONY: setup dev dev-api dev-web check format format-check lint typecheck test test-web build hooks pre-commit
 
 setup:
 	uv sync
@@ -18,7 +18,7 @@ dev-api:
 dev-web:
 	npm run dev --prefix web
 
-check: lint format-check typecheck test build
+check: lint format-check typecheck test test-web build
 
 format:
 	uv run ruff check --fix .
@@ -35,6 +35,9 @@ typecheck:
 
 test:
 	uv run pytest
+
+test-web:
+	npm run test --prefix web
 
 build:
 	npm run build --prefix web

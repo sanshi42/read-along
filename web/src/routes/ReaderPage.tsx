@@ -26,6 +26,12 @@ import {
   type ReadingPreferences,
   type ThemePreference,
 } from "../readingPreferences";
+import {
+  isRectFullyVisibleWithinReaderChrome,
+  normalizeReadingTitle,
+  scrollTargetForRectWithinReaderChrome,
+  shouldShowReaderNavContext,
+} from "./readerPageViewModel";
 
 type PlaybackStatus = "idle" | "loading" | "playing" | "paused";
 type ProgressInput = Pick<
@@ -35,6 +41,7 @@ type ProgressInput = Pick<
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2] as const;
 const SCROLL_KEYS = new Set(["ArrowDown", "ArrowUp", "End", "Home", "PageDown", "PageUp", " "]);
+const READER_CHROME_MARGIN = 18;
 
 interface ReaderPageProps {
   readingPreferences: ReadingPreferences;
@@ -44,6 +51,20 @@ interface ReaderPageProps {
 
 function sourceLabel(material: MaterialDetail) {
   return material.primary_source.source_type === "pdf" ? "文本型 PDF" : "网页";
+}
+
+function sourceDetailLabel(material: MaterialDetail, readingTitle: string) {
+  const sourceUri = material.primary_source.source_uri.trim();
+  if (!sourceUri) {
+    return null;
+  }
+  if (
+    material.primary_source.source_type === "pdf" &&
+    normalizeReadingTitle(sourceUri) === readingTitle
+  ) {
+    return null;
+  }
+  return sourceUri;
 }
 
 export function ReaderPage({
@@ -62,7 +83,7 @@ export function ReaderPage({
   const [progressError, setProgressError] = useState<string | null>(null);
   const [showReturnToCurrent, setShowReturnToCurrent] = useState(false);
   const [showReadingPreferences, setShowReadingPreferences] = useState(false);
-  const [focusableSentenceId, setFocusableSentenceId] = useState<string | null>(null);
+  const [showReaderContext, setShowReaderContext] = useState(false);
   const [materialReloadKey, setMaterialReloadKey] = useState(0);
   const currentSentenceIdRef = useRef<string | null>(null);
   const playbackRateRef = useRef(1);
@@ -77,6 +98,9 @@ export function ReaderPage({
   const progressGenerationRef = useRef(0);
   const followCurrentRef = useRef(true);
   const userScrollIntentUntilRef = useRef(0);
+  const readerNavRef = useRef<HTMLElement | null>(null);
+  const readerHeaderRef = useRef<HTMLElement | null>(null);
+  const playerBarRef = useRef<HTMLElement | null>(null);
   const readingPreferencesRef = useRef<HTMLDivElement | null>(null);
   const readingPreferencesTriggerRef = useRef<HTMLButtonElement | null>(null);
 
@@ -87,6 +111,14 @@ export function ReaderPage({
   const currentSentenceIndex = sentences.findIndex(
     (sentence) => sentence.id === currentSentenceId,
   );
+  const readingTitle = material ? normalizeReadingTitle(material.title) : "";
+  const sourceDetail = material ? sourceDetailLabel(material, readingTitle) : null;
+  const readerContextProgress =
+    currentSentenceIndex >= 0
+      ? `第 ${currentSentenceIndex + 1} / ${sentences.length} 句`
+      : sentences.length > 0
+        ? `共 ${sentences.length} 句`
+        : "";
 
   useEffect(() => {
     discardPlayback();
@@ -102,7 +134,7 @@ export function ReaderPage({
     setPlaybackError(null);
     setProgressError(null);
     setShowReturnToCurrent(false);
-    setFocusableSentenceId(null);
+    setShowReaderContext(false);
     updatePlaybackStatus("idle");
     setMaterial(null);
     setError(null);
@@ -135,11 +167,6 @@ export function ReaderPage({
           updatePlaybackStatus("paused");
           scheduleScrollToCurrent("auto");
         }
-        setFocusableSentenceId(
-          progress && sentenceExists
-            ? progress.sentence_id
-            : (item.paragraphs[0]?.sentences[0]?.id ?? null),
-        );
       })
       .catch((reason: unknown) => {
         if (active) {
@@ -171,6 +198,7 @@ export function ReaderPage({
         followCurrentRef.current = false;
       }
       updateReturnToCurrent();
+      updateReaderNavContext();
     }
 
     window.addEventListener("wheel", recordUserScrollIntent, { passive: true });
@@ -178,14 +206,20 @@ export function ReaderPage({
     window.addEventListener("keydown", recordKeyboardScrollIntent);
     window.addEventListener("scroll", handleScroll, { passive: true });
     window.addEventListener("resize", updateReturnToCurrent);
+    window.addEventListener("resize", updateReaderNavContext);
     return () => {
       window.removeEventListener("wheel", recordUserScrollIntent);
       window.removeEventListener("touchmove", recordUserScrollIntent);
       window.removeEventListener("keydown", recordKeyboardScrollIntent);
       window.removeEventListener("scroll", handleScroll);
       window.removeEventListener("resize", updateReturnToCurrent);
+      window.removeEventListener("resize", updateReaderNavContext);
     };
   }, []);
+
+  useEffect(() => {
+    updateReaderNavContext();
+  }, [material, currentSentenceIndex]);
 
   useEffect(() => {
     if (!showReadingPreferences) {
@@ -243,7 +277,6 @@ export function ReaderPage({
     currentSentenceIdRef.current = sentenceId;
     playbackCompletedRef.current = completed;
     setCurrentSentenceId(sentenceId);
-    setFocusableSentenceId(sentenceId);
     setPlaybackCompleted(completed);
     if (options.resumeFollowing) {
       followCurrentRef.current = true;
@@ -330,7 +363,6 @@ export function ReaderPage({
   function selectSentence(sentenceId: string) {
     discardPlayback();
     setPlaybackError(null);
-    setFocusableSentenceId(sentenceId);
     updatePlaybackStatus("paused");
     updateCurrentPosition(sentenceId, false, { resumeFollowing: true });
   }
@@ -442,7 +474,6 @@ export function ReaderPage({
   }
 
   function handleSentenceClick(sentenceId: string) {
-    setFocusableSentenceId(sentenceId);
     if (sentenceId === currentSentenceIdRef.current && !playbackCompletedRef.current) {
       if (playbackStatusRef.current === "playing") {
         void playSentence(sentenceId, true);
@@ -475,13 +506,27 @@ export function ReaderPage({
     return sentenceId ? document.getElementById(sentenceId) : null;
   }
 
+  function readerChromeBounds() {
+    const navBottom = readerNavRef.current?.getBoundingClientRect().bottom ?? 0;
+    const playerTop = playerBarRef.current?.getBoundingClientRect().top ?? window.innerHeight;
+    const top = Math.min(window.innerHeight, navBottom + READER_CHROME_MARGIN);
+    const playerAwareBottom = playerTop - READER_CHROME_MARGIN;
+    const fallbackBottom = window.innerHeight - READER_CHROME_MARGIN;
+    const bottom =
+      playerAwareBottom > top + 44 ? Math.min(playerAwareBottom, fallbackBottom) : fallbackBottom;
+    return { top, bottom };
+  }
+
   function isCurrentSentenceFullyVisible() {
     const element = sentenceElement();
     if (!element) {
       return true;
     }
     const rect = element.getBoundingClientRect();
-    return rect.top >= 72 && rect.bottom <= window.innerHeight - 120;
+    return isRectFullyVisibleWithinReaderChrome(
+      { top: rect.top, bottom: rect.bottom, height: rect.height },
+      readerChromeBounds(),
+    );
   }
 
   function scheduleScrollToCurrent(behavior: ScrollBehavior) {
@@ -489,25 +534,45 @@ export function ReaderPage({
       requestAnimationFrame(() => {
         const element = sentenceElement();
         if (element && !isCurrentSentenceFullyVisible()) {
+          const rect = element.getBoundingClientRect();
           userScrollIntentUntilRef.current = 0;
-          element.scrollIntoView({ behavior, block: "center" });
+          window.scrollTo({
+            top: scrollTargetForRectWithinReaderChrome(
+              { top: rect.top, bottom: rect.bottom, height: rect.height },
+              window.scrollY,
+              readerChromeBounds(),
+            ),
+            behavior,
+          });
         }
-        updateReturnToCurrent();
+        window.setTimeout(updateReturnToCurrent, behavior === "smooth" ? 240 : 0);
       });
     });
   }
 
   function updateReturnToCurrent() {
     setShowReturnToCurrent(
-      !followCurrentRef.current &&
-        currentSentenceIdRef.current !== null &&
-        !isCurrentSentenceFullyVisible(),
+      currentSentenceIdRef.current !== null && !isCurrentSentenceFullyVisible(),
+    );
+  }
+
+  function updateReaderNavContext() {
+    const header = readerHeaderRef.current;
+    const nav = readerNavRef.current;
+    if (!header || !nav) {
+      setShowReaderContext(false);
+      return;
+    }
+    setShowReaderContext(
+      shouldShowReaderNavContext({
+        headerBottom: header.getBoundingClientRect().bottom,
+        navBottom: nav.getBoundingClientRect().bottom,
+      }),
     );
   }
 
   function returnToCurrentSentence() {
     followCurrentRef.current = true;
-    setShowReturnToCurrent(false);
     scheduleScrollToCurrent("auto");
   }
 
@@ -528,35 +593,6 @@ export function ReaderPage({
     setShowReadingPreferences(false);
   }
 
-  function handleSentenceKeyDown(event: React.KeyboardEvent<HTMLSpanElement>, sentenceId: string) {
-    const currentIndex = sentences.findIndex((sentence) => sentence.id === sentenceId);
-    let nextIndex = currentIndex;
-    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
-      nextIndex = Math.min(currentIndex + 1, sentences.length - 1);
-    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
-      nextIndex = Math.max(currentIndex - 1, 0);
-    } else if (event.key === "Home") {
-      nextIndex = 0;
-    } else if (event.key === "End") {
-      nextIndex = sentences.length - 1;
-    } else if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      event.stopPropagation();
-      handleSentenceClick(sentenceId);
-      return;
-    } else {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    const nextSentenceId = sentences[nextIndex]?.id;
-    if (nextSentenceId) {
-      document.getElementById(nextSentenceId)?.focus();
-      setFocusableSentenceId(nextSentenceId);
-    }
-  }
-
   const playbackLabel =
     playbackStatus === "loading"
       ? "正在准备音频"
@@ -570,11 +606,28 @@ export function ReaderPage({
 
   return (
     <main className="reader-shell">
-      <nav className="reader-nav" aria-label="阅读页导航">
+      <nav
+        ref={readerNavRef}
+        className={`reader-nav ${showReaderContext ? "reader-nav-with-context" : ""}`}
+        aria-label="阅读页导航"
+      >
         <Link className="text-link" to="/">
           <ArrowLeft aria-hidden="true" />
           返回书架
         </Link>
+        {material ? (
+          <div
+            className={`reader-nav-context ${
+              showReaderContext ? "reader-nav-context-visible" : ""
+            }`}
+            aria-hidden={!showReaderContext}
+          >
+            <span className="reader-nav-title">{readingTitle}</span>
+            {readerContextProgress ? (
+              <span className="reader-nav-progress">{readerContextProgress}</span>
+            ) : null}
+          </div>
+        ) : null}
         <div className="reader-nav-actions" ref={readingPreferencesRef}>
           <span className="reader-brand">Read Along</span>
           <button
@@ -676,10 +729,10 @@ export function ReaderPage({
 
       {!error && material ? (
         <article className="reader-entry">
-          <header>
+          <header ref={readerHeaderRef}>
             <p className="eyebrow">{sourceLabel(material)}</p>
-            <h1>{material.title}</h1>
-            <p className="reader-source">{material.primary_source.source_uri}</p>
+            <h1>{readingTitle}</h1>
+            {sourceDetail ? <p className="reader-source">{sourceDetail}</p> : null}
           </header>
           <div className="reader-content">
             {material.paragraphs.map((paragraph) => (
@@ -692,10 +745,7 @@ export function ReaderPage({
                       <span
                         key={sentence.id}
                         id={sentence.id}
-                        role="button"
-                        tabIndex={sentence.id === focusableSentenceId ? 0 : -1}
-                        aria-current={isCurrent ? "true" : undefined}
-                        aria-label={`${sentence.text}${isCurrent ? " 当前句" : ""}`}
+                        aria-current={isCurrent ? "location" : undefined}
                         className={[
                           "reader-sentence",
                           isCurrent ? "reader-sentence-current" : "",
@@ -704,8 +754,6 @@ export function ReaderPage({
                           .filter(Boolean)
                           .join(" ")}
                         onClick={() => handleSentenceClick(sentence.id)}
-                        onFocus={() => setFocusableSentenceId(sentence.id)}
-                        onKeyDown={(event) => handleSentenceKeyDown(event, sentence.id)}
                       >
                         {sentence.text}
                       </span>
@@ -719,7 +767,7 @@ export function ReaderPage({
       ) : null}
 
       {!error && material && sentences.length > 0 ? (
-        <section className="player-bar" aria-label="朗读控制">
+        <section ref={playerBarRef} className="player-bar" aria-label="朗读控制">
           <div className="player-position" aria-live="polite">
             <strong>{playbackLabel}</strong>
             <span>
