@@ -15,6 +15,7 @@ import { Link, useParams } from "react-router-dom";
 
 import {
   getMaterial,
+  prepareSentenceAudio,
   saveProgress,
   sentenceAudioUrl,
   type MaterialDetail,
@@ -26,6 +27,12 @@ import {
   type ReadingPreferences,
   type ThemePreference,
 } from "../readingPreferences";
+import {
+  SentenceAudioPreparationQueue,
+  audioPreloadWindow,
+  initialAudioPreloadAnchor,
+  preparationErrorMessage,
+} from "./readerAudioPreparation";
 import {
   isRectFullyVisibleWithinReaderChrome,
   normalizeReadingTitle,
@@ -91,6 +98,7 @@ export function ReaderPage({
   const playbackCompletedRef = useRef(false);
   const playbackStatusRef = useRef<PlaybackStatus>("idle");
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioPreparationRef = useRef<SentenceAudioPreparationQueue | null>(null);
   const playbackGenerationRef = useRef(0);
   const activeMaterialIdRef = useRef<string | null>(null);
   const pendingProgressRef = useRef<ProgressInput | null>(null);
@@ -129,6 +137,11 @@ export function ReaderPage({
     playbackCompletedRef.current = false;
     followCurrentRef.current = true;
     activeMaterialIdRef.current = materialId ?? null;
+    audioPreparationRef.current = materialId
+      ? new SentenceAudioPreparationQueue((sentenceId) =>
+          prepareSentenceAudio(materialId, sentenceId),
+        )
+      : null;
     setCurrentSentenceId(null);
     setPlaybackRate(1);
     setPlaybackCompleted(false);
@@ -153,11 +166,11 @@ export function ReaderPage({
         }
         setMaterial(item);
         const progress = item.progress;
+        const loadedSentences = item.paragraphs.flatMap((paragraph) => paragraph.sentences);
+        const loadedSentenceIds = loadedSentences.map((sentence) => sentence.id);
         const sentenceExists =
           progress !== null &&
-          item.paragraphs.some((paragraph) =>
-            paragraph.sentences.some((sentence) => sentence.id === progress.sentence_id),
-          );
+          loadedSentences.some((sentence) => sentence.id === progress.sentence_id);
         if (progress && sentenceExists) {
           currentSentenceIdRef.current = progress.sentence_id;
           playbackRateRef.current = progress.playback_rate;
@@ -168,6 +181,10 @@ export function ReaderPage({
           updatePlaybackStatus("paused");
           scheduleScrollToCurrent("auto");
         }
+        scheduleAudioPreload(
+          initialAudioPreloadAnchor(loadedSentenceIds, sentenceExists ? progress : null),
+          loadedSentenceIds,
+        );
       })
       .catch((reason: unknown) => {
         if (active) {
@@ -262,6 +279,7 @@ export function ReaderPage({
         audio.removeAttribute("src");
         audio.load();
       }
+      audioPreparationRef.current = null;
     };
   }, []);
 
@@ -293,6 +311,18 @@ export function ReaderPage({
     if (followCurrentRef.current) {
       scheduleScrollToCurrent(options.scrollBehavior ?? "smooth");
     }
+    scheduleAudioPreload(sentenceId);
+  }
+
+  function scheduleAudioPreload(
+    anchorSentenceId: string | null,
+    sentenceIds = sentences.map((sentence) => sentence.id),
+  ) {
+    const queue = audioPreparationRef.current;
+    if (!queue) {
+      return;
+    }
+    void queue.preloadWindow(audioPreloadWindow(sentenceIds, anchorSentenceId));
   }
 
   function discardPlayback() {
@@ -398,6 +428,19 @@ export function ReaderPage({
     updateCurrentPosition(sentenceId, false);
     updatePlaybackStatus("loading");
     const generation = playbackGenerationRef.current;
+    try {
+      await audioPreparationRef.current?.prepareForPlayback(sentenceId);
+    } catch (reason: unknown) {
+      if (playbackGenerationRef.current !== generation) {
+        return;
+      }
+      updatePlaybackStatus("paused");
+      setPlaybackError(preparationErrorMessage(reason));
+      return;
+    }
+    if (playbackGenerationRef.current !== generation) {
+      return;
+    }
     const audio = new Audio(sentenceAudioUrl(materialId, sentenceId));
     audio.playbackRate = playbackRateRef.current;
     audioRef.current = audio;

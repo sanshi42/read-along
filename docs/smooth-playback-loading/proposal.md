@@ -1,5 +1,5 @@
 ---
-status: draft
+status: done
 priority: P0
 created: 2026-06-16
 ---
