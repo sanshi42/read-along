@@ -28,6 +28,7 @@ import {
   type ThemePreference,
 } from "../readingPreferences";
 import {
+  SentenceAudioElementCache,
   SentenceAudioPreparationQueue,
   audioPreloadWindow,
   initialAudioPreloadAnchor,
@@ -99,6 +100,7 @@ export function ReaderPage({
   const playbackStatusRef = useRef<PlaybackStatus>("idle");
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioPreparationRef = useRef<SentenceAudioPreparationQueue | null>(null);
+  const audioElementCacheRef = useRef<SentenceAudioElementCache<HTMLAudioElement> | null>(null);
   const playbackGenerationRef = useRef(0);
   const activeMaterialIdRef = useRef<string | null>(null);
   const pendingProgressRef = useRef<ProgressInput | null>(null);
@@ -131,6 +133,7 @@ export function ReaderPage({
 
   useEffect(() => {
     discardPlayback();
+    audioElementCacheRef.current?.clear();
     resetProgressSaving();
     currentSentenceIdRef.current = null;
     playbackRateRef.current = 1;
@@ -141,6 +144,9 @@ export function ReaderPage({
       ? new SentenceAudioPreparationQueue((sentenceId) =>
           prepareSentenceAudio(materialId, sentenceId),
         )
+      : null;
+    audioElementCacheRef.current = materialId
+      ? new SentenceAudioElementCache((sentenceId) => new Audio(sentenceAudioUrl(materialId, sentenceId)))
       : null;
     setCurrentSentenceId(null);
     setPlaybackRate(1);
@@ -280,6 +286,8 @@ export function ReaderPage({
         audio.load();
       }
       audioPreparationRef.current = null;
+      audioElementCacheRef.current?.clear();
+      audioElementCacheRef.current = null;
     };
   }, []);
 
@@ -337,6 +345,34 @@ export function ReaderPage({
       audio.removeAttribute("src");
       audio.load();
     }
+  }
+
+  function prepareNextBrowserAudio(sentenceId: string, generation: number) {
+    const queue = audioPreparationRef.current;
+    const cache = audioElementCacheRef.current;
+    if (!queue || !cache) {
+      return;
+    }
+    const currentIndex = sentences.findIndex((sentence) => sentence.id === sentenceId);
+    const nextSentence = sentences[currentIndex + 1];
+    if (!nextSentence || cache.has(nextSentence.id)) {
+      return;
+    }
+
+    void queue
+      .prepareForPlayback(nextSentence.id)
+      .then(() => {
+        if (
+          playbackGenerationRef.current !== generation ||
+          audioElementCacheRef.current !== cache
+        ) {
+          return;
+        }
+        cache.prepare(nextSentence.id, playbackRateRef.current);
+      })
+      .catch(() => {
+        // 后台浏览器预载失败时不打断当前朗读；真正播放该句时会重试。
+      });
   }
 
   function resetProgressSaving() {
@@ -441,7 +477,9 @@ export function ReaderPage({
     if (playbackGenerationRef.current !== generation) {
       return;
     }
-    const audio = new Audio(sentenceAudioUrl(materialId, sentenceId));
+    const audio =
+      audioElementCacheRef.current?.take(sentenceId, playbackRateRef.current) ??
+      new Audio(sentenceAudioUrl(materialId, sentenceId));
     audio.playbackRate = playbackRateRef.current;
     audioRef.current = audio;
     audio.onended = () => {
@@ -467,6 +505,7 @@ export function ReaderPage({
     };
 
     try {
+      prepareNextBrowserAudio(sentenceId, generation);
       await audio.play();
       if (audioRef.current === audio) {
         updatePlaybackStatus("playing");
@@ -542,6 +581,7 @@ export function ReaderPage({
     if (audioRef.current) {
       audioRef.current.playbackRate = rate;
     }
+    audioElementCacheRef.current?.syncPlaybackRate(rate);
 
     const sentenceId = currentSentenceIdRef.current ?? sentences[0]?.id;
     if (sentenceId) {

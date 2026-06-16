@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  SentenceAudioElementCache,
   SentenceAudioPreparationQueue,
   audioPreloadWindow,
   initialAudioPreloadAnchor,
@@ -9,6 +10,26 @@ import {
 import type { ReadingProgress } from "../src/api.ts";
 
 const sentenceIds = ["s1", "s2", "s3", "s4", "s5", "s6"];
+
+class FakeAudioElement {
+  playbackRate = 1;
+  preload = "metadata";
+  loadCalls = 0;
+  pauseCalls = 0;
+  removedAttributes: string[] = [];
+
+  load() {
+    this.loadCalls += 1;
+  }
+
+  pause() {
+    this.pauseCalls += 1;
+  }
+
+  removeAttribute(name: string) {
+    this.removedAttributes.push(name);
+  }
+}
 
 function progress(
   sentenceId: string,
@@ -111,4 +132,34 @@ test("SentenceAudioPreparationQueue lets foreground requests bypass a different 
   await backgroundStarted;
   assert.deepEqual(calls, ["s1", "s2"]);
   releaseBackground();
+});
+
+test("SentenceAudioElementCache loads and reuses prepared audio for playback", () => {
+  const created: string[] = [];
+  const cache = new SentenceAudioElementCache((sentenceId) => {
+    created.push(sentenceId);
+    return new FakeAudioElement();
+  });
+
+  const prepared = cache.prepare("s2", 1.25);
+  const reused = cache.take("s2", 1.5);
+
+  assert.deepEqual(created, ["s2"]);
+  assert.equal(reused, prepared);
+  assert.equal(reused.preload, "auto");
+  assert.equal(reused.loadCalls, 1);
+  assert.equal(reused.playbackRate, 1.5);
+  assert.equal(cache.has("s2"), false);
+});
+
+test("SentenceAudioElementCache clears unused prepared audio", () => {
+  const cache = new SentenceAudioElementCache(() => new FakeAudioElement());
+  const prepared = cache.prepare("s2", 1);
+
+  cache.clear();
+
+  assert.equal(prepared.pauseCalls, 1);
+  assert.deepEqual(prepared.removedAttributes, ["src"]);
+  assert.equal(prepared.loadCalls, 2);
+  assert.equal(cache.has("s2"), false);
 });

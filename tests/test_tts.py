@@ -98,9 +98,18 @@ def test_generate_creates_private_pcm_wav_from_standard_input(
     assert list(tmp_path.glob('.sentence.*.wav')) == []
 
 
-def test_generate_normalizes_book_title_marks_before_running_say(
+@pytest.mark.parametrize(
+    ('source_text', 'tts_input'),
+    [
+        ('演过《奋斗》里的华子。', '演过 奋斗 里的华子。'),
+        ('和“伟大的灵魂都是雌雄同体”是一个意思。', '和 伟大的灵魂都是雌雄同体 是一个意思。'),
+    ],
+)
+def test_generate_normalizes_wrapping_punctuation_before_running_say(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    source_text: str,
+    tts_input: str,
 ) -> None:
     command = executable(tmp_path)
     output_path = tmp_path / 'sentence.wav'
@@ -119,9 +128,9 @@ def test_generate_normalizes_book_title_marks_before_running_say(
     monkeypatch.setattr(tts.sys, 'platform', 'darwin')
     monkeypatch.setattr(tts.subprocess, 'run', fake_run)
 
-    MacOSSayTTS(command=command).generate('演过《奋斗》里的华子。', output_path)
+    MacOSSayTTS(command=command).generate(source_text, output_path)
 
-    assert captured['input'] == '演过 奋斗 里的华子。'
+    assert captured['input'] == tts_input
 
 
 @pytest.mark.parametrize('timeout', [0, -1, math.inf, math.nan])

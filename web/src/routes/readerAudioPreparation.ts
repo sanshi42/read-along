@@ -7,6 +7,14 @@ export interface AudioPreparationSnapshot {
   errorMessage: string | null;
 }
 
+interface CacheableAudioElement {
+  playbackRate: number;
+  preload: string;
+  load: () => void;
+  pause: () => void;
+  removeAttribute: (qualifiedName: string) => void;
+}
+
 interface AudioPreparationRecord extends AudioPreparationSnapshot {
   promise: Promise<void> | null;
   backgroundRequests: number;
@@ -42,6 +50,64 @@ export function audioPreloadWindow(
     return [];
   }
   return sentenceIds.slice(startIndex, startIndex + windowSize);
+}
+
+export class SentenceAudioElementCache<AudioElement extends CacheableAudioElement> {
+  private readonly elements = new Map<string, AudioElement>();
+  private readonly createAudio: (sentenceId: string) => AudioElement;
+
+  constructor(createAudio: (sentenceId: string) => AudioElement) {
+    this.createAudio = createAudio;
+  }
+
+  has(sentenceId: string): boolean {
+    return this.elements.has(sentenceId);
+  }
+
+  prepare(sentenceId: string, playbackRate: number): AudioElement {
+    const audio = this.elementFor(sentenceId);
+    audio.preload = "auto";
+    audio.playbackRate = playbackRate;
+    audio.load();
+    return audio;
+  }
+
+  take(sentenceId: string, playbackRate: number): AudioElement {
+    const audio = this.elementFor(sentenceId);
+    this.elements.delete(sentenceId);
+    audio.preload = "auto";
+    audio.playbackRate = playbackRate;
+    return audio;
+  }
+
+  syncPlaybackRate(playbackRate: number) {
+    for (const audio of this.elements.values()) {
+      audio.playbackRate = playbackRate;
+    }
+  }
+
+  clear() {
+    for (const audio of this.elements.values()) {
+      this.release(audio);
+    }
+    this.elements.clear();
+  }
+
+  private elementFor(sentenceId: string): AudioElement {
+    const existing = this.elements.get(sentenceId);
+    if (existing) {
+      return existing;
+    }
+    const audio = this.createAudio(sentenceId);
+    this.elements.set(sentenceId, audio);
+    return audio;
+  }
+
+  private release(audio: AudioElement) {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+  }
 }
 
 export class SentenceAudioPreparationQueue {

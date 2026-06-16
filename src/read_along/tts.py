@@ -10,7 +10,8 @@ from tempfile import NamedTemporaryFile
 
 DIAGNOSTIC_LIMIT = 500
 WAV_HEADER_SIZE = 12
-TTS_INPUT_TRANSLATION = str.maketrans({'《': ' ', '》': ' '})
+TTS_WRAPPING_PUNCTUATION = '《》〈〉“”‘’「」『』﹁﹂﹃﹄【】〖〗〔〕（）［］｛｝'
+TTS_INPUT_TRANSLATION = str.maketrans(TTS_WRAPPING_PUNCTUATION, ' ' * len(TTS_WRAPPING_PUNCTUATION))
 
 
 class TTSGenerationError(RuntimeError):
