@@ -1,5 +1,5 @@
 ---
-status: draft
+status: paused
 priority: P2
 created: 2026-06-19
 ---

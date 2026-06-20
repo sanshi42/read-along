@@ -7,6 +7,7 @@ import {
   sentencePointerAction,
   scrollTargetForRectWithinReaderChrome,
   shouldShowReaderNavContext,
+  zenModeShortcutAction,
 } from "../src/routes/readerPageViewModel.ts";
 
 test("normalizeReadingTitle removes only a final PDF extension", () => {
@@ -48,4 +49,45 @@ test("scrollTargetForRectWithinReaderChrome centers short sentences in the reada
 test("sentencePointerAction keeps single click for selecting and double click for playback", () => {
   assert.equal(sentencePointerAction(1), "select");
   assert.equal(sentencePointerAction(2), "play");
+});
+
+test("zenModeShortcutAction toggles with Z only outside interactive targets", () => {
+  assert.equal(
+    zenModeShortcutAction({ key: "z" }, { zenMode: false, interactiveTarget: false }),
+    "toggle",
+  );
+  assert.equal(
+    zenModeShortcutAction({ key: "Z", shiftKey: true }, { zenMode: true, interactiveTarget: false }),
+    "toggle",
+  );
+  assert.equal(
+    zenModeShortcutAction({ key: "z" }, { zenMode: false, interactiveTarget: true }),
+    null,
+  );
+});
+
+test("zenModeShortcutAction exits with Escape only while zen mode is active", () => {
+  assert.equal(
+    zenModeShortcutAction({ key: "Escape" }, { zenMode: true, interactiveTarget: true }),
+    "exit",
+  );
+  assert.equal(
+    zenModeShortcutAction({ key: "Escape" }, { zenMode: false, interactiveTarget: false }),
+    null,
+  );
+});
+
+test("zenModeShortcutAction ignores modified shortcuts", () => {
+  assert.equal(
+    zenModeShortcutAction({ key: "z", metaKey: true }, { zenMode: false, interactiveTarget: false }),
+    null,
+  );
+  assert.equal(
+    zenModeShortcutAction({ key: "z", ctrlKey: true }, { zenMode: false, interactiveTarget: false }),
+    null,
+  );
+  assert.equal(
+    zenModeShortcutAction({ key: "z", altKey: true }, { zenMode: false, interactiveTarget: false }),
+    null,
+  );
 });
