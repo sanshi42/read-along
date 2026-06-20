@@ -121,6 +121,10 @@ class SentenceRow(SQLModel, table=True):
     __tablename__ = 'sentences'  # pyrefly: ignore [bad-override]
     __table_args__ = (
         CheckConstraint("audio_status IN ('pending', 'ready', 'failed')", name='ck_sentences_audio_status'),
+        CheckConstraint(
+            'audio_duration_seconds IS NULL OR audio_duration_seconds >= 0',
+            name='ck_sentences_audio_duration_seconds',
+        ),
         UniqueConstraint('material_id', 'index', name='uq_sentences_material_index'),
         UniqueConstraint('id', 'material_id', name='uq_sentences_identity'),
         ForeignKeyConstraint(
@@ -145,6 +149,7 @@ class SentenceRow(SQLModel, table=True):
     text: str = Field(sa_column=Column(Text, nullable=False))
     audio_status: AudioStatus = Field(sa_column=Column(String(ENUM_LENGTH), nullable=False))
     audio_path: str | None = Field(default=None, sa_column=Column(Text))
+    audio_duration_seconds: float | None = Field(default=None, sa_column=Column(Float))
     error_message: str | None = Field(default=None, sa_column=Column(Text))
 
     material: MaterialRow = Relationship(
@@ -158,6 +163,7 @@ class ReadingProgressRow(SQLModel, table=True):
     __tablename__ = 'reading_progress'  # pyrefly: ignore [bad-override]
     __table_args__ = (
         CheckConstraint('playback_rate > 0', name='ck_reading_progress_playback_rate'),
+        CheckConstraint('sentence_offset_seconds >= 0', name='ck_reading_progress_sentence_offset_seconds'),
         CheckConstraint('playback_completed IN (0, 1)', name='ck_reading_progress_playback_completed'),
         ForeignKeyConstraint(
             ('sentence_id', 'material_id'),
@@ -176,6 +182,7 @@ class ReadingProgressRow(SQLModel, table=True):
         )
     )
     sentence_id: str = Field(sa_column=Column(String(ID_LENGTH), nullable=False))
+    sentence_offset_seconds: float = Field(sa_column=Column(Float, nullable=False, server_default='0'))
     playback_rate: float = Field(sa_column=Column(Float, nullable=False))
     playback_completed: bool = Field(sa_column=Column(Integer, nullable=False))
     updated_at: datetime = Field(sa_column=Column(UTCDateTime(), nullable=False))

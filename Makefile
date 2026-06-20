@@ -7,13 +7,13 @@ setup:
 
 dev:
 	@set -eu; \
-	uv run read-along serve & \
+	uv run read-along serve --reload & \
 	api_pid=$$!; \
 	trap 'kill $$api_pid 2>/dev/null || true' INT TERM EXIT; \
 	npm run dev --prefix web
 
 dev-api:
-	uv run read-along serve
+	uv run read-along serve --reload
 
 dev-web:
 	npm run dev --prefix web

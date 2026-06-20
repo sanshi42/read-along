@@ -24,12 +24,12 @@ make dev
 
 服务默认监听 `http://127.0.0.1:8765`，健康检查位于 `GET /api/health`。
 
-前端默认监听 `http://127.0.0.1:5173`，开发服务器会将 `/api` 请求代理到本地后端。`make dev` 会在同一终端启动后端和前端；后端源码变更后重启命令，前端由 Vite 热更新。
+前端默认监听 `http://127.0.0.1:5173`，开发服务器会将 `/api` 请求代理到本地后端。`make dev` 会在同一终端启动后端和前端；后端启用 Uvicorn reload，前端由 Vite 热更新。
 
 也可以分别启动：
 
 ```bash
-uv run read-along serve
+uv run read-along serve --reload
 npm run dev --prefix web
 ```
 

@@ -52,6 +52,7 @@ def sentence_data() -> dict[str, object]:
         'text': 'Sentence.',
         'audio_status': 'pending',
         'audio_path': None,
+        'audio_duration_seconds': None,
         'error_message': None,
     }
 
@@ -91,7 +92,22 @@ def test_reading_progress_requires_positive_playback_rate() -> None:
             {
                 'material_id': 'mat-1',
                 'sentence_id': 'sentence-1',
+                'sentence_offset_seconds': 0,
                 'playback_rate': 0,
+                'playback_completed': False,
+                'updated_at': '2026-06-06T00:00:00Z',
+            }
+        )
+
+
+def test_reading_progress_requires_non_negative_sentence_offset() -> None:
+    with pytest.raises(ValidationError):
+        ReadingProgress.model_validate(
+            {
+                'material_id': 'mat-1',
+                'sentence_id': 'sentence-1',
+                'sentence_offset_seconds': -0.1,
+                'playback_rate': 1,
                 'playback_completed': False,
                 'updated_at': '2026-06-06T00:00:00Z',
             }
@@ -103,6 +119,7 @@ def test_reading_progress_expresses_playback_completed_state() -> None:
         {
             'material_id': 'mat-1',
             'sentence_id': 'sentence-1',
+            'sentence_offset_seconds': 2.5,
             'playback_rate': 1.25,
             'playback_completed': True,
             'updated_at': '2026-06-06T00:00:00Z',
@@ -110,6 +127,7 @@ def test_reading_progress_expresses_playback_completed_state() -> None:
     )
 
     assert progress.playback_completed is True
+    assert progress.sentence_offset_seconds == 2.5
 
 
 def test_playback_position_requires_positive_sentence_values() -> None:
@@ -140,6 +158,8 @@ def test_material_detail_expresses_sentences_nested_by_paragraph() -> None:
             'sources': [source_data()],
             'progress': None,
             'playback_position': None,
+            'playback_time_position': None,
+            'navigation': {'previous': None, 'next': None},
             'paragraphs': [
                 ParagraphDetail(
                     id='paragraph-1',
@@ -165,6 +185,8 @@ def test_material_import_result_expresses_outcome_and_material() -> None:
             'sources': [source_data()],
             'progress': None,
             'playback_position': None,
+            'playback_time_position': None,
+            'navigation': {'previous': None, 'next': None},
             'paragraphs': [],
         }
     )
@@ -188,6 +210,19 @@ def test_api_material_responses_exclude_internal_audio_path() -> None:
             'sources': [source_data()],
             'progress': None,
             'playback_position': None,
+            'playback_time_position': {
+                'elapsed_seconds': 1.5,
+                'total_seconds': 8.5,
+                'estimated': True,
+            },
+            'navigation': {
+                'previous': {
+                    **material_data(),
+                    'id': 'mat-0',
+                    'title': '上一篇',
+                },
+                'next': None,
+            },
             'paragraphs': [
                 {
                     'id': 'paragraph-1',
@@ -207,8 +242,15 @@ def test_api_material_responses_exclude_internal_audio_path() -> None:
 
     public_sentence = detail_data['paragraphs'][0]['sentences'][0]
     assert 'audio_path' not in public_sentence
+    assert public_sentence['audio_duration_seconds'] is None
     assert public_sentence['audio_status'] == 'failed'
     assert public_sentence['error_message'] == '生成失败。'
+    assert detail_data['playback_time_position'] == {
+        'elapsed_seconds': 1.5,
+        'total_seconds': 8.5,
+        'estimated': True,
+    }
+    assert detail_data['navigation']['previous']['title'] == '上一篇'
     assert result_data['material'] == detail_data
 
 

@@ -13,6 +13,7 @@ export interface MaterialSource {
 export interface ReadingProgress {
   material_id: string;
   sentence_id: string;
+  sentence_offset_seconds: number;
   playback_rate: number;
   playback_completed: boolean;
   updated_at: string;
@@ -23,6 +24,19 @@ export interface PlaybackPosition {
   sentence_count: number;
 }
 
+export interface PlaybackTimePosition {
+  elapsed_seconds: number;
+  total_seconds: number;
+  estimated: boolean;
+}
+
+export interface MaterialNavigationItem {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface MaterialSummary {
   id: string;
   title: string;
@@ -31,10 +45,15 @@ export interface MaterialSummary {
   primary_source: MaterialSource;
   progress: ReadingProgress | null;
   playback_position: PlaybackPosition | null;
+  playback_time_position: PlaybackTimePosition | null;
 }
 
 export interface MaterialDetail extends MaterialSummary {
   sources: MaterialSource[];
+  navigation: {
+    previous: MaterialNavigationItem | null;
+    next: MaterialNavigationItem | null;
+  };
   paragraphs: Array<{
     id: string;
     index: number;
@@ -45,6 +64,7 @@ export interface MaterialDetail extends MaterialSummary {
       index: number;
       text: string;
       audio_status: "pending" | "ready" | "failed";
+      audio_duration_seconds: number | null;
       error_message: string | null;
     }>;
   }>;
@@ -88,7 +108,7 @@ async function requestWithoutBody(path: string, options?: RequestInit): Promise<
   }
 }
 
-async function requestAudio(path: string): Promise<void> {
+async function requestAudio(path: string): Promise<number | null> {
   const response = await fetch(path);
   if (!response.ok) {
     let message = `请求失败（${response.status}）`;
@@ -103,6 +123,8 @@ async function requestAudio(path: string): Promise<void> {
     throw new Error(message);
   }
   await response.arrayBuffer();
+  const duration = Number(response.headers.get("X-Read-Along-Audio-Duration-Seconds"));
+  return Number.isFinite(duration) && duration >= 0 ? duration : null;
 }
 
 export function listMaterials(): Promise<MaterialSummary[]> {
@@ -119,17 +141,38 @@ export function deleteMaterial(materialId: string): Promise<void> {
   });
 }
 
-export function sentenceAudioUrl(materialId: string, sentenceId: string): string {
-  return `/api/materials/${encodeURIComponent(materialId)}/sentences/${encodeURIComponent(sentenceId)}/audio`;
+export function clearMaterialAudioCache(materialId: string): Promise<void> {
+  return requestWithoutBody(`/api/materials/${encodeURIComponent(materialId)}/audio-cache`, {
+    method: "DELETE",
+  });
 }
 
-export function prepareSentenceAudio(materialId: string, sentenceId: string): Promise<void> {
-  return requestAudio(sentenceAudioUrl(materialId, sentenceId));
+export function sentenceAudioUrl(
+  materialId: string,
+  sentenceId: string,
+  reloadToken?: string | null,
+): string {
+  const path = `/api/materials/${encodeURIComponent(materialId)}/sentences/${encodeURIComponent(sentenceId)}/audio`;
+  if (!reloadToken) {
+    return path;
+  }
+  return `${path}?${new URLSearchParams({ reload: reloadToken })}`;
+}
+
+export function prepareSentenceAudio(
+  materialId: string,
+  sentenceId: string,
+  reloadToken?: string | null,
+): Promise<number | null> {
+  return requestAudio(sentenceAudioUrl(materialId, sentenceId, reloadToken));
 }
 
 export function saveProgress(
   materialId: string,
-  progress: Pick<ReadingProgress, "sentence_id" | "playback_rate" | "playback_completed">,
+  progress: Pick<
+    ReadingProgress,
+    "sentence_id" | "sentence_offset_seconds" | "playback_rate" | "playback_completed"
+  >,
 ): Promise<ReadingProgress> {
   return request<ReadingProgress>(`/api/materials/${encodeURIComponent(materialId)}/progress`, {
     method: "PUT",

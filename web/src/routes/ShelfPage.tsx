@@ -8,7 +8,7 @@ import {
   LockKeyhole,
   Trash2,
 } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type DragEvent, type FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import {
@@ -21,7 +21,8 @@ import {
   type MaterialSummary,
   type UrlImportMode,
 } from "../api";
-import { removeMaterialFromList } from "./shelfPageViewModel";
+import { formatTimelineTime } from "./readerPlaybackTimeline";
+import { pickPdfFile, removeMaterialFromList } from "./shelfPageViewModel";
 
 type ImportType = "url" | "pdf";
 
@@ -46,17 +47,36 @@ function importMessage(outcome: ImportOutcome, title: string) {
 }
 
 function playbackPercentage(material: MaterialSummary) {
-  if (!material.playback_position || !material.progress) {
+  const position = material.playback_time_position;
+  if (!position || !material.progress || position.total_seconds <= 0) {
     return null;
   }
   if (material.progress.playback_completed) {
     return 100;
   }
-  const { sentence_index: index, sentence_count: count } = material.playback_position;
-  if (count <= 1) {
-    return 0;
+  return Math.round(
+    Math.min(Math.max(position.elapsed_seconds / position.total_seconds, 0), 1) * 100,
+  );
+}
+
+function playbackTimeLabel(material: MaterialSummary, percentage: number) {
+  const position = material.playback_time_position;
+  if (!position || position.total_seconds <= 0) {
+    return null;
   }
-  return Math.round(((index - 1) / (count - 1)) * 100);
+  const total = `${position.estimated ? "约 " : ""}${formatTimelineTime(position.total_seconds)}`;
+  if (material.progress?.playback_completed) {
+    return `朗读完成 · ${total}`;
+  }
+  return `朗读位置 ${percentage}% · ${formatTimelineTime(position.elapsed_seconds)} / ${total}`;
+}
+
+function sentencePositionLabel(material: MaterialSummary) {
+  const position = material.playback_position;
+  if (!position) {
+    return null;
+  }
+  return `第 ${position.sentence_index} / ${position.sentence_count} 句`;
 }
 
 function materialActionLabel(material: MaterialSummary) {
@@ -78,6 +98,7 @@ export function ShelfPage() {
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<MaterialImportResult | null>(null);
+  const [pdfDropActive, setPdfDropActive] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deletingMaterialId, setDeletingMaterialId] = useState<string | null>(null);
   const pdfInputRef = useRef<HTMLInputElement | null>(null);
@@ -102,6 +123,31 @@ export function ShelfPage() {
       active = false;
     };
   }, [shelfReloadKey]);
+
+  useEffect(() => {
+    if (importing) {
+      return;
+    }
+
+    function handleWindowPaste(event: ClipboardEvent) {
+      const selected = pickPdfFile(event.clipboardData?.files);
+      if (!selected.file) {
+        if (selected.hasFiles && importExpanded && importType === "pdf") {
+          event.preventDefault();
+          rejectPdfSelection("请粘贴 PDF 文件");
+        }
+        return;
+      }
+
+      event.preventDefault();
+      acceptPdfFile(selected.file);
+    }
+
+    window.addEventListener("paste", handleWindowPaste);
+    return () => {
+      window.removeEventListener("paste", handleWindowPaste);
+    };
+  }, [importExpanded, importType, importing]);
 
   function applyImportResult(result: MaterialImportResult) {
     const imported = result.material;
@@ -167,8 +213,74 @@ export function ShelfPage() {
     }
   }
 
+  function acceptPdfFile(file: File) {
+    setImportType("pdf");
+    setShowImport(true);
+    setPdfFile(file);
+    setPdfDropActive(false);
+    setImportError(null);
+    setImportResult(null);
+  }
+
+  function rejectPdfSelection(message: string) {
+    setPdfFile(null);
+    setPdfDropActive(false);
+    setImportError(message);
+    setImportResult(null);
+  }
+
+  function selectPdfFiles(files: FileList | null | undefined, message: string) {
+    const selected = pickPdfFile(files);
+    if (selected.file) {
+      acceptPdfFile(selected.file);
+      return true;
+    }
+    if (selected.hasFiles) {
+      rejectPdfSelection(message);
+    }
+    return false;
+  }
+
+  function handlePdfFileChange(event: FormEvent<HTMLInputElement>) {
+    selectPdfFiles(event.currentTarget.files, "请选择 PDF 文件");
+  }
+
+  function handlePdfDragEnter(event: DragEvent<HTMLDivElement>) {
+    if (importing || !importExpanded || !event.dataTransfer.types.includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    setPdfDropActive(true);
+  }
+
+  function handlePdfDragOver(event: DragEvent<HTMLDivElement>) {
+    if (importing || !importExpanded || !event.dataTransfer.types.includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setPdfDropActive(true);
+  }
+
+  function handlePdfDragLeave(event: DragEvent<HTMLDivElement>) {
+    const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null;
+    if (nextTarget && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+    setPdfDropActive(false);
+  }
+
+  function handlePdfDrop(event: DragEvent<HTMLDivElement>) {
+    if (importing || !importExpanded) {
+      return;
+    }
+    event.preventDefault();
+    selectPdfFiles(event.dataTransfer.files, "请拖入 PDF 文件");
+  }
+
   function selectImportType(type: ImportType) {
     setImportType(type);
+    setPdfDropActive(false);
     setImportError(null);
     setImportResult(null);
   }
@@ -322,27 +434,45 @@ export function ShelfPage() {
             </form>
           ) : (
             <form className="import-form" onSubmit={handlePdfImport}>
-              <label className="form-field" htmlFor="pdf-input">
-                <span>文本型 PDF 文件</span>
-                <span className="input-action-row">
-                  <input
-                    ref={pdfInputRef}
-                    id="pdf-input"
-                    type="file"
-                    accept="application/pdf,.pdf"
-                    disabled={importing || !importExpanded}
-                    onChange={(event) => setPdfFile(event.target.files?.[0] ?? null)}
-                  />
-                  <button
-                    className="button button-primary"
-                    type="submit"
-                    disabled={importing || !importExpanded}
-                  >
-                    {importing ? <LoaderCircle aria-hidden="true" className="spin" /> : null}
-                    {importing ? "导入中" : "导入 PDF"}
-                  </button>
-                </span>
-              </label>
+              <div
+                className={[
+                  "pdf-drop-zone",
+                  pdfDropActive ? "pdf-drop-zone-active" : "",
+                  pdfFile ? "pdf-drop-zone-ready" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                onDragEnter={handlePdfDragEnter}
+                onDragOver={handlePdfDragOver}
+                onDragLeave={handlePdfDragLeave}
+                onDrop={handlePdfDrop}
+              >
+                <label className="form-field" htmlFor="pdf-input">
+                  <span>文本型 PDF 文件</span>
+                  <span className="input-action-row">
+                    <input
+                      ref={pdfInputRef}
+                      id="pdf-input"
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      disabled={importing || !importExpanded}
+                      onChange={handlePdfFileChange}
+                    />
+                    <button
+                      className="button button-primary"
+                      type="submit"
+                      disabled={importing || !importExpanded}
+                    >
+                      {importing ? <LoaderCircle aria-hidden="true" className="spin" /> : null}
+                      {importing ? "导入中" : "导入 PDF"}
+                    </button>
+                  </span>
+                </label>
+                <div className="pdf-drop-copy">
+                  <FileText aria-hidden="true" />
+                  <span>{pdfFile ? `已选择：${pdfFile.name}` : "拖入或粘贴 PDF 文件"}</span>
+                </div>
+              </div>
               <p className="form-hint">仅支持包含可提取文字的 PDF，不支持扫描版 OCR。</p>
               <ImportFeedback error={importError} result={importResult} />
             </form>
@@ -418,8 +548,8 @@ interface MaterialRowProps {
 
 function MaterialRow({ material, deleting, onDelete }: MaterialRowProps) {
   const percentage = playbackPercentage(material);
-  const position = material.playback_position;
-  const completed = material.progress?.playback_completed ?? false;
+  const positionLabel = percentage === null ? null : playbackTimeLabel(material, percentage);
+  const sentenceLabel = sentencePositionLabel(material);
   return (
     <div className="material-row">
       <Link className="material-row-open" to={`/materials/${material.id}`}>
@@ -434,15 +564,16 @@ function MaterialRow({ material, deleting, onDelete }: MaterialRowProps) {
           </div>
           <h3>{material.title}</h3>
           <p className="source-uri">{material.primary_source.source_uri}</p>
-          {percentage !== null && position ? (
+          {percentage !== null && positionLabel ? (
             <div className="playback-position">
               <span className="position-track" aria-hidden="true">
                 <span style={{ width: `${percentage}%` }} />
               </span>
-              <span>
-                {completed
-                  ? "朗读完成"
-                  : `朗读位置 ${percentage}% · 第 ${position.sentence_index} / ${position.sentence_count} 句`}
+              <span className="position-copy">
+                <span className="position-primary">{positionLabel}</span>
+                {sentenceLabel ? (
+                  <span className="position-sentence-muted">{sentenceLabel}</span>
+                ) : null}
               </span>
             </div>
           ) : (

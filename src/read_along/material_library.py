@@ -6,6 +6,7 @@ import math
 import shutil
 import sqlite3
 import threading
+import wave
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,9 +25,12 @@ from read_along.models import (
     Material,
     MaterialDetail,
     MaterialImportResult,
+    MaterialNavigation,
+    MaterialNavigationItem,
     MaterialSummary,
     ParagraphDetail,
     PlaybackPosition,
+    PlaybackTimePosition,
     ReadingMaterialDraft,
     ReadingProgress,
     Sentence,
@@ -34,7 +38,7 @@ from read_along.models import (
 )
 from read_along.repository import Repository
 from read_along.storage import StoragePaths
-from read_along.tts import MacOSSayTTS, TTSGenerationError
+from read_along.tts import MacOSSayTTS, TTSGenerationError, tts_input_fingerprint
 
 
 class MaterialLibraryError(RuntimeError):
@@ -97,6 +101,52 @@ def _audio_relative_path(material_id: str, sentence_id: str) -> Path:
         if not identity or identity in {'.', '..'} or identity_path.is_absolute() or identity_path.parts != (identity,):
             raise AudioGenerationError('句子音频缓存路径不合法。')
     return Path(material_id) / f'{sentence_id}.wav'
+
+
+def _audio_cache_path_escaped(path: Path, audio_root: Path) -> bool:
+    try:
+        return path.is_symlink() or not path.resolve().is_relative_to(audio_root)
+    except (OSError, RuntimeError):
+        return True
+
+
+def _audio_fingerprint_path(output_path: Path) -> Path:
+    return output_path.with_name(f'{output_path.name}.tts-input')
+
+
+def _audio_cache_matches_tts_input(output_path: Path, fingerprint: str) -> bool:
+    try:
+        return _audio_fingerprint_path(output_path).read_text() == fingerprint
+    except OSError:
+        return False
+
+
+def _discard_audio_cache(output_path: Path) -> None:
+    output_path.unlink(missing_ok=True)
+    _audio_fingerprint_path(output_path).unlink(missing_ok=True)
+
+
+def _write_audio_cache_fingerprint(output_path: Path, fingerprint: str) -> None:
+    try:
+        _audio_fingerprint_path(output_path).write_text(fingerprint)
+    except OSError as exc:
+        raise AudioGenerationError('无法保存句子音频缓存元数据。') from exc
+
+
+def _wav_duration_seconds(path: Path) -> float:
+    try:
+        with wave.open(str(path), 'rb') as audio:
+            frame_rate = audio.getframerate()
+            frame_count = audio.getnframes()
+    except (EOFError, OSError, wave.Error) as exc:
+        raise AudioGenerationError('无法读取句子音频时长。') from exc
+    if frame_rate <= 0 or frame_count < 0:
+        raise AudioGenerationError('无法读取句子音频时长。')
+    return frame_count / frame_rate
+
+
+def _estimated_sentence_duration(sentence: Sentence, seconds_per_character: float) -> float:
+    return max(1.0, min(60.0, len(sentence.text.strip()) * seconds_per_character))
 
 
 def _normalized_url(url: str) -> str:
@@ -269,11 +319,15 @@ class MaterialLibrary:
         material_id: str,
         sentence_id: str,
         playback_rate: float,
+        *,
+        sentence_offset_seconds: float = 0,
         playback_completed: bool = False,
     ) -> ReadingProgress:
         """保存指定材料的当前句子和播放倍速。"""
         if not math.isfinite(playback_rate) or playback_rate <= 0:
             raise InvalidProgressError('播放倍速必须是大于零的有限数值')
+        if not math.isfinite(sentence_offset_seconds) or sentence_offset_seconds < 0:
+            raise InvalidProgressError('句内播放位置必须是大于或等于零的有限数值')
 
         now = _now_iso()
         with closing(self.repository.connect()) as connection:
@@ -297,6 +351,7 @@ class MaterialLibrary:
                     connection,
                     material_id=material_id,
                     sentence_id=sentence_id,
+                    sentence_offset_seconds=sentence_offset_seconds,
                     playback_rate=playback_rate,
                     playback_completed=playback_completed,
                     updated_at=now,
@@ -323,6 +378,47 @@ class MaterialLibrary:
         with self._audio_lock(material_id, sentence_id):
             return self._get_or_generate_audio_locked(material_id, sentence_id)
 
+    def clear_material_audio_cache(self, material_id: str) -> None:
+        """清理指定阅读材料的句子音频缓存，并重置句子音频状态。"""
+        try:
+            with closing(self.repository.connect()) as connection:
+                material = self.repository.get_material(connection, material_id)
+                if material is None:
+                    raise MaterialNotFoundError(f'阅读材料不存在：{material_id}')
+                sentences = self.repository.list_sentences(connection, material_id)
+        except sqlite3.Error as exc:
+            raise MaterialLibraryError('读取阅读材料失败') from exc
+
+        audio_dir = self.storage_paths.audio / material_id
+        try:
+            if audio_dir.is_symlink() or audio_dir.is_file():
+                audio_dir.unlink()
+            else:
+                shutil.rmtree(audio_dir, ignore_errors=True)
+        except OSError as exc:
+            raise AudioGenerationError('无法清理句子音频缓存。') from exc
+
+        try:
+            with closing(self.repository.connect()) as connection:
+                try:
+                    connection.execute('BEGIN IMMEDIATE')
+                    for sentence in sentences:
+                        self.repository.update_sentence_audio(
+                            connection,
+                            material_id=material_id,
+                            sentence_id=sentence.id,
+                            audio_status=AudioStatus.PENDING.value,
+                            audio_path=None,
+                            audio_duration_seconds=None,
+                            error_message=None,
+                        )
+                    connection.commit()
+                except sqlite3.Error:
+                    connection.rollback()
+                    raise
+        except sqlite3.Error as exc:
+            raise AudioGenerationError('无法更新句子音频状态。') from exc
+
     def _get_or_generate_audio_locked(self, material_id: str, sentence_id: str) -> Path:
         try:
             with closing(self.repository.connect()) as connection:
@@ -338,6 +434,33 @@ class MaterialLibrary:
 
         relative_path = _audio_relative_path(material_id, sentence_id)
         output_path = self.storage_paths.audio / relative_path
+        fingerprint = tts_input_fingerprint(sentence.text)
+        audio_root = self.storage_paths.audio.resolve()
+        material_audio_dir = self.storage_paths.audio / material_id
+        try:
+            material_audio_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            message = '无法访问句子音频缓存。'
+            self._update_audio_state(
+                material_id,
+                sentence_id,
+                audio_status=AudioStatus.FAILED,
+                audio_path=None,
+                audio_duration_seconds=None,
+                error_message=message,
+            )
+            raise AudioGenerationError(message) from exc
+        if _audio_cache_path_escaped(material_audio_dir, audio_root):
+            message = '句子音频缓存路径不合法。'
+            self._update_audio_state(
+                material_id,
+                sentence_id,
+                audio_status=AudioStatus.FAILED,
+                audio_path=None,
+                audio_duration_seconds=None,
+                error_message=message,
+            )
+            raise AudioGenerationError(message)
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -347,39 +470,40 @@ class MaterialLibrary:
                 sentence_id,
                 audio_status=AudioStatus.FAILED,
                 audio_path=None,
+                audio_duration_seconds=None,
                 error_message=message,
             )
             raise AudioGenerationError(message) from exc
-        try:
-            path_escaped = output_path.parent.is_symlink() or not output_path.parent.resolve().is_relative_to(
-                self.storage_paths.audio.resolve()
-            )
-        except (OSError, RuntimeError):
-            path_escaped = True
-        if path_escaped:
+        if _audio_cache_path_escaped(output_path.parent, audio_root):
             message = '句子音频缓存路径不合法。'
             self._update_audio_state(
                 material_id,
                 sentence_id,
                 audio_status=AudioStatus.FAILED,
                 audio_path=None,
+                audio_duration_seconds=None,
                 error_message=message,
             )
             raise AudioGenerationError(message)
         if output_path.is_file() and not output_path.is_symlink():
-            self._update_audio_state(
-                material_id,
-                sentence_id,
-                audio_status=AudioStatus.READY,
-                audio_path=relative_path.as_posix(),
-                error_message=None,
-            )
-            return output_path
+            if _audio_cache_matches_tts_input(output_path, fingerprint):
+                duration = self._read_audio_duration(material_id, sentence_id, output_path)
+                self._update_audio_state(
+                    material_id,
+                    sentence_id,
+                    audio_status=AudioStatus.READY,
+                    audio_path=relative_path.as_posix(),
+                    audio_duration_seconds=duration,
+                    error_message=None,
+                )
+                return output_path
+            _discard_audio_cache(output_path)
         self._update_audio_state(
             material_id,
             sentence_id,
             audio_status=AudioStatus.PENDING,
             audio_path=None,
+            audio_duration_seconds=None,
             error_message=None,
         )
         try:
@@ -395,17 +519,48 @@ class MaterialLibrary:
                 sentence_id,
                 audio_status=AudioStatus.FAILED,
                 audio_path=None,
+                audio_duration_seconds=None,
                 error_message=message,
             )
             raise AudioGenerationError(message) from exc
+        duration = self._read_audio_duration(material_id, sentence_id, output_path)
+        try:
+            _write_audio_cache_fingerprint(output_path, fingerprint)
+        except AudioGenerationError as exc:
+            output_path.unlink(missing_ok=True)
+            self._update_audio_state(
+                material_id,
+                sentence_id,
+                audio_status=AudioStatus.FAILED,
+                audio_path=None,
+                audio_duration_seconds=None,
+                error_message=str(exc),
+            )
+            raise
         self._update_audio_state(
             material_id,
             sentence_id,
             audio_status=AudioStatus.READY,
             audio_path=relative_path.as_posix(),
+            audio_duration_seconds=duration,
             error_message=None,
         )
         return output_path
+
+    def _read_audio_duration(self, material_id: str, sentence_id: str, output_path: Path) -> float:
+        try:
+            return _wav_duration_seconds(output_path)
+        except AudioGenerationError as exc:
+            output_path.unlink(missing_ok=True)
+            self._update_audio_state(
+                material_id,
+                sentence_id,
+                audio_status=AudioStatus.FAILED,
+                audio_path=None,
+                audio_duration_seconds=None,
+                error_message=str(exc),
+            )
+            raise
 
     def _audio_lock(self, material_id: str, sentence_id: str) -> threading.Lock:
         key = (material_id, sentence_id)
@@ -526,6 +681,7 @@ class MaterialLibrary:
             primary_source=sources[0],
             progress=progress,
             playback_position=self._playback_position(connection, material.id),
+            playback_time_position=self._playback_time_position(connection, material.id),
         )
 
     def _detail(
@@ -553,6 +709,8 @@ class MaterialLibrary:
             sources=sources,
             progress=self.repository.get_progress(connection, material.id),
             playback_position=self._playback_position(connection, material.id),
+            playback_time_position=self._playback_time_position(connection, material.id),
+            navigation=self._navigation(connection, material.id),
             paragraphs=paragraphs,
         )
 
@@ -568,6 +726,67 @@ class MaterialLibrary:
         return PlaybackPosition(
             sentence_index=sentence_index,
             sentence_count=sentence_count,
+        )
+
+    def _playback_time_position(
+        self,
+        connection: sqlite3.Connection,
+        material_id: str,
+    ) -> PlaybackTimePosition | None:
+        progress = self.repository.get_progress(connection, material_id)
+        if progress is None:
+            return None
+        sentences = self.repository.list_sentences(connection, material_id)
+        if not sentences:
+            return None
+        known = [
+            (sentence.audio_duration_seconds, len(sentence.text.strip()))
+            for sentence in sentences
+            if sentence.audio_duration_seconds is not None and len(sentence.text.strip()) > 0
+        ]
+        if known:
+            seconds_per_character = sum(duration for duration, _ in known) / sum(length for _, length in known)
+        else:
+            seconds_per_character = 0.35
+        durations = [
+            sentence.audio_duration_seconds
+            if sentence.audio_duration_seconds is not None
+            else _estimated_sentence_duration(sentence, seconds_per_character)
+            for sentence in sentences
+        ]
+        current_index = next(
+            (index for index, sentence in enumerate(sentences) if sentence.id == progress.sentence_id),
+            None,
+        )
+        if current_index is None:
+            return None
+        total = sum(durations)
+        if progress.playback_completed:
+            elapsed = total
+        else:
+            elapsed = sum(durations[:current_index]) + min(progress.sentence_offset_seconds, durations[current_index])
+        return PlaybackTimePosition(
+            elapsed_seconds=elapsed,
+            total_seconds=total,
+            estimated=any(sentence.audio_duration_seconds is None for sentence in sentences),
+        )
+
+    def _navigation(
+        self,
+        connection: sqlite3.Connection,
+        material_id: str,
+    ) -> MaterialNavigation:
+        materials = self.repository.list_materials_by_creation(connection)
+        current_index = next((index for index, material in enumerate(materials) if material.id == material_id), None)
+        if current_index is None:
+            return MaterialNavigation(previous=None, next=None)
+        previous_material = materials[current_index - 1] if current_index > 0 else None
+        next_material = materials[current_index + 1] if current_index < len(materials) - 1 else None
+        return MaterialNavigation(
+            previous=(
+                MaterialNavigationItem.model_validate(previous_material.model_dump()) if previous_material else None
+            ),
+            next=MaterialNavigationItem.model_validate(next_material.model_dump()) if next_material else None,
         )
 
     def _cleanup_failed_save(
@@ -589,6 +808,7 @@ class MaterialLibrary:
         *,
         audio_status: AudioStatus,
         audio_path: str | None,
+        audio_duration_seconds: float | None,
         error_message: str | None,
     ) -> None:
         try:
@@ -599,6 +819,7 @@ class MaterialLibrary:
                     sentence_id=sentence_id,
                     audio_status=audio_status.value,
                     audio_path=audio_path,
+                    audio_duration_seconds=audio_duration_seconds,
                     error_message=error_message,
                 )
                 connection.commit()

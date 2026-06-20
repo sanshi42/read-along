@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   SentenceAudioElementCache,
   SentenceAudioPreparationQueue,
+  audioRepairPreloadWindow,
   audioPreloadWindow,
   initialAudioPreloadAnchor,
 } from "../src/routes/readerAudioPreparation.ts";
@@ -51,6 +52,34 @@ test("audioPreloadWindow returns current sentence and the next four sentences", 
   assert.deepEqual(audioPreloadWindow(sentenceIds, "s2"), ["s2", "s3", "s4", "s5", "s6"]);
   assert.deepEqual(audioPreloadWindow(sentenceIds, "s5"), ["s5", "s6"]);
   assert.deepEqual(audioPreloadWindow(sentenceIds, null), []);
+});
+
+test("audioRepairPreloadWindow keeps repair work near the visible current sentence", () => {
+  assert.deepEqual(
+    audioRepairPreloadWindow(sentenceIds, "s4", ["s3", "s4", "s5"], {
+      contextBefore: 2,
+      contextAfter: 1,
+    }),
+    ["s2", "s3", "s4", "s5"],
+  );
+});
+
+test("audioRepairPreloadWindow follows the visible area when current sentence is offscreen", () => {
+  assert.deepEqual(
+    audioRepairPreloadWindow(sentenceIds, "s6", ["s2", "s3"], {
+      contextBefore: 1,
+      contextAfter: 1,
+    }),
+    ["s1", "s2", "s3"],
+  );
+  assert.deepEqual(
+    audioRepairPreloadWindow(sentenceIds, "missing", ["s3"], {
+      contextBefore: 1,
+      contextAfter: 1,
+    }),
+    ["s2", "s3", "s4"],
+  );
+  assert.deepEqual(audioRepairPreloadWindow(sentenceIds, null), []);
 });
 
 test("SentenceAudioPreparationQueue retries a failed background preload once", async () => {
@@ -132,6 +161,19 @@ test("SentenceAudioPreparationQueue lets foreground requests bypass a different 
   await backgroundStarted;
   assert.deepEqual(calls, ["s1", "s2"]);
   releaseBackground();
+});
+
+test("SentenceAudioPreparationQueue clear makes ready sentences prepare again", async () => {
+  const calls: string[] = [];
+  const queue = new SentenceAudioPreparationQueue(async (sentenceId) => {
+    calls.push(sentenceId);
+  });
+
+  await queue.prepareForPlayback("s1");
+  queue.clear();
+  await queue.prepareForPlayback("s1");
+
+  assert.deepEqual(calls, ["s1", "s1"]);
 });
 
 test("SentenceAudioElementCache loads and reuses prepared audio for playback", () => {

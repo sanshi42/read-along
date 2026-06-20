@@ -1,9 +1,11 @@
+import wave
 from pathlib import Path
 
 import pymupdf
 import pytest
 from fastapi.testclient import TestClient
 
+import read_along.api as api
 from read_along.api import create_app, get_material_library
 from read_along.config import AppConfig
 from read_along.db import initialize_database
@@ -14,6 +16,14 @@ from read_along.storage import StoragePaths
 from read_along.tts import TTSGenerationError
 
 
+def write_wav(path: Path, *, duration_seconds: float = 1.25, sample_rate: int = 8000) -> None:
+    with wave.open(str(path), 'wb') as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(sample_rate)
+        audio.writeframes(b'\0\0' * int(duration_seconds * sample_rate))
+
+
 def test_health_endpoint() -> None:
     client = TestClient(create_app())
 
@@ -21,6 +31,21 @@ def test_health_endpoint() -> None:
 
     assert response.status_code == 200
     assert response.json() == {'status': 'ok', 'service': 'read-along'}
+
+
+def test_app_dependencies_initialize_state_when_reload_worker_imports_app(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv('READ_ALONG_HOME', str(tmp_path / 'data'))
+    monkeypatch.setattr(api, '_state', None)
+    client = TestClient(create_app())
+
+    response = client.get('/api/materials')
+
+    assert response.status_code == 200
+    assert response.json() == []
+    assert api._state is not None
 
 
 def test_material_list_returns_empty_shelf(tmp_path: Path) -> None:
@@ -49,6 +74,7 @@ def test_material_list_returns_saved_material(tmp_path: Path) -> None:
     assert response.json()[0]['title'] == '示例文章'
     assert response.json()[0]['primary_source']['source_uri'] == 'https://example.com/article'
     assert response.json()[0]['playback_position'] is None
+    assert response.json()[0]['playback_time_position'] is None
 
 
 def test_material_detail_returns_saved_material(tmp_path: Path) -> None:
@@ -63,7 +89,10 @@ def test_material_detail_returns_saved_material(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.json()['id'] == material.material.id
     assert response.json()['playback_position'] is None
+    assert response.json()['playback_time_position'] is None
+    assert response.json()['navigation'] == {'previous': None, 'next': None}
     assert response.json()['paragraphs'][0]['sentences'][0]['text'] == '第一句。'
+    assert response.json()['paragraphs'][0]['sentences'][0]['audio_duration_seconds'] is None
     assert 'audio_path' not in response.json()['paragraphs'][0]['sentences'][0]
 
 
@@ -71,7 +100,7 @@ def test_material_list_and_detail_return_playback_position(tmp_path: Path) -> No
     library = _make_library(tmp_path)
     material = _save_url_material(library)
     current_sentence = material.material.paragraphs[0].sentences[1]
-    library.save_progress(material.material.id, current_sentence.id, 1.0)
+    library.save_progress(material.material.id, current_sentence.id, 1.0, sentence_offset_seconds=2.5)
     app = create_app()
     app.dependency_overrides[get_material_library] = lambda: library
     client = TestClient(app)
@@ -87,6 +116,7 @@ def test_material_list_and_detail_return_playback_position(tmp_path: Path) -> No
         'sentence_index': 2,
         'sentence_count': 2,
     }
+    assert detail_response.json()['progress']['sentence_offset_seconds'] == 2.5
 
 
 def test_material_detail_returns_chinese_not_found_error(tmp_path: Path) -> None:
@@ -130,6 +160,7 @@ def test_progress_endpoint_saves_current_sentence_rate_and_completion(tmp_path: 
         f'/api/materials/{material.material.id}/progress',
         json={
             'sentence_id': sentence.id,
+            'sentence_offset_seconds': 3.25,
             'playback_rate': 1.5,
             'playback_completed': True,
         },
@@ -138,11 +169,13 @@ def test_progress_endpoint_saves_current_sentence_rate_and_completion(tmp_path: 
     assert response.status_code == 200
     assert response.json()['material_id'] == material.material.id
     assert response.json()['sentence_id'] == sentence.id
+    assert response.json()['sentence_offset_seconds'] == 3.25
     assert response.json()['playback_rate'] == 1.5
     assert response.json()['playback_completed'] is True
     saved_progress = library.get(material.material.id).progress
     assert saved_progress is not None
     assert saved_progress.playback_completed is True
+    assert saved_progress.sentence_offset_seconds == 3.25
 
 
 def test_progress_endpoint_reports_invalid_material_and_sentence(tmp_path: Path) -> None:
@@ -157,11 +190,21 @@ def test_progress_endpoint_reports_invalid_material_and_sentence(tmp_path: Path)
 
     missing = client.put(
         '/api/materials/missing/progress',
-        json={'sentence_id': first_sentence.id, 'playback_rate': 1.0, 'playback_completed': False},
+        json={
+            'sentence_id': first_sentence.id,
+            'sentence_offset_seconds': 0,
+            'playback_rate': 1.0,
+            'playback_completed': False,
+        },
     )
     unrelated = client.put(
         f'/api/materials/{first.material.id}/progress',
-        json={'sentence_id': second_sentence.id, 'playback_rate': 1.0, 'playback_completed': False},
+        json={
+            'sentence_id': second_sentence.id,
+            'sentence_offset_seconds': 0,
+            'playback_rate': 1.0,
+            'playback_completed': False,
+        },
     )
 
     assert missing.status_code == 404
@@ -182,7 +225,7 @@ def test_sentence_audio_endpoint_generates_and_reuses_wav(
     def generate(text: str, output_path: Path) -> Path:
         nonlocal calls
         calls += 1
-        output_path.write_bytes(b'RIFFaudioWAVE')
+        write_wav(output_path, duration_seconds=1.5)
         return output_path
 
     monkeypatch.setattr(library.tts, 'generate', generate)
@@ -195,12 +238,55 @@ def test_sentence_audio_endpoint_generates_and_reuses_wav(
     second = client.get(path)
 
     assert first.status_code == 200
-    assert first.content == b'RIFFaudioWAVE'
+    assert first.content.startswith(b'RIFF')
+    assert first.headers['x-read-along-audio-duration-seconds'] == '1.5'
     assert first.headers['content-type'] == 'audio/wav'
-    assert first.headers['cache-control'] == 'private, max-age=31536000, immutable'
+    assert first.headers['cache-control'] == 'private, no-cache'
     assert second.status_code == 200
     assert second.content == first.content
+    assert second.headers['x-read-along-audio-duration-seconds'] == '1.5'
     assert calls == 1
+
+
+def test_clear_material_audio_endpoint_removes_current_material_audio_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = _make_library(tmp_path)
+    material = _save_url_material(library, sentences=['第一句。', '第二句。'])
+    sentences = material.material.paragraphs[0].sentences
+
+    def generate(text: str, output_path: Path) -> Path:
+        write_wav(output_path)
+        return output_path
+
+    monkeypatch.setattr(library.tts, 'generate', generate)
+    for sentence in sentences:
+        library.get_or_generate_audio(material.material.id, sentence.id)
+    audio_dir = library.storage_paths.audio / material.material.id
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+
+    response = client.delete(f'/api/materials/{material.material.id}/audio-cache')
+
+    reopened_sentences = library.get(material.material.id).paragraphs[0].sentences
+    assert response.status_code == 204
+    assert not audio_dir.exists()
+    assert all(sentence.audio_status.value == 'pending' for sentence in reopened_sentences)
+    assert all(sentence.audio_duration_seconds is None for sentence in reopened_sentences)
+
+
+def test_clear_material_audio_endpoint_reports_missing_material(tmp_path: Path) -> None:
+    library = _make_library(tmp_path)
+    app = create_app()
+    app.dependency_overrides[get_material_library] = lambda: library
+    client = TestClient(app)
+
+    response = client.delete('/api/materials/missing/audio-cache')
+
+    assert response.status_code == 404
+    assert response.json() == {'detail': '阅读材料不存在：missing'}
 
 
 def test_sentence_audio_endpoint_hides_missing_identity(tmp_path: Path) -> None:
