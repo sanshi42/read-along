@@ -609,8 +609,6 @@ class MaterialLibrary:
                 raise InvalidDraftError('段落必须包含至少一个句子')
             if any(not sentence.strip() for sentence in paragraph.sentences):
                 raise InvalidDraftError('句子文本不能为空')
-            if paragraph.text != ' '.join(paragraph.sentences):
-                raise InvalidDraftError('段落正文与句子内容不一致')
             if paragraph.source_label is not None and not paragraph.source_label.strip():
                 raise InvalidDraftError('来源标记不能为空字符串')
 

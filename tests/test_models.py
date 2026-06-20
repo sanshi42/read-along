@@ -271,7 +271,6 @@ def test_reading_material_draft_excludes_persistence_fields() -> None:
         title='示例',
         paragraphs=[
             ReadingMaterialDraftParagraph(
-                text='第一句。',
                 sentences=['第一句。'],
             )
         ],
@@ -279,3 +278,10 @@ def test_reading_material_draft_excludes_persistence_fields() -> None:
 
     assert draft.source_file is None
     assert 'content_hash' not in draft.model_dump()
+
+
+def test_reading_material_draft_paragraph_derives_text_from_sentences() -> None:
+    paragraph = ReadingMaterialDraftParagraph(sentences=['第一句。', '第二句。'])
+
+    assert paragraph.text == '第一句。 第二句。'
+    assert 'text' not in paragraph.model_dump()

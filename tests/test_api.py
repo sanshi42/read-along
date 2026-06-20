@@ -534,7 +534,6 @@ def _save_url_material(
             title='示例文章',
             paragraphs=[
                 ReadingMaterialDraftParagraph(
-                    text=' '.join(sentences),
                     sentences=sentences,
                 ),
             ],
