@@ -65,7 +65,6 @@ def material_library(tmp_path: Path) -> tuple[MaterialLibrary, StoragePaths]:
 
 def paragraph(*sentences: str, source_label: str | None = None) -> ReadingMaterialDraftParagraph:
     return ReadingMaterialDraftParagraph(
-        text=' '.join(sentences),
         source_label=source_label,
         sentences=list(sentences),
     )
@@ -117,9 +116,9 @@ def test_save_persists_complete_material_and_owned_source_file(tmp_path: Path) -
 def test_save_rejects_invalid_draft(tmp_path: Path) -> None:
     library, _ = material_library(tmp_path)
     draft = url_draft()
-    draft.paragraphs[0].text = '不一致的段落正文'
+    draft.paragraphs[0].sentences = ['']
 
-    with pytest.raises(InvalidDraftError, match='不一致'):
+    with pytest.raises(InvalidDraftError, match='句子文本不能为空'):
         library.save(draft)
 
     assert library.list_shelf() == []

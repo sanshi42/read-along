@@ -71,7 +71,6 @@ def import_pdf(
         for block_number, sentences in enumerate(structure_text(page_text), start=1):
             paragraphs.append(
                 ReadingMaterialDraftParagraph(
-                    text=' '.join(sentences),
                     source_label=f'第 {page_number} 页，第 {block_number} 段',
                     sentences=sentences,
                 )
@@ -209,7 +208,6 @@ def _draft_paragraphs(
             continue
         paragraphs.append(
             ReadingMaterialDraftParagraph(
-                text=' '.join(sentences),
                 source_label=f'网页正文，第 {block_number} 段',
                 sentences=sentences,
             )

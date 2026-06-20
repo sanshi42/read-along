@@ -258,9 +258,13 @@ class MaterialImportResponse(DataModel):
 class ReadingMaterialDraftParagraph(DataModel):
     """导入阶段的段落草稿。"""
 
-    text: str
     source_label: str | None = None
     sentences: list[str]
+
+    @property
+    def text(self) -> str:
+        """由句子序列派生的段落正文。"""
+        return ' '.join(self.sentences)
 
 
 class ReadingMaterialDraft(DataModel):
