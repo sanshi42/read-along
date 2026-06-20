@@ -21,8 +21,15 @@ interface AudioPreparationRecord extends AudioPreparationSnapshot {
 }
 
 const AUDIO_PRELOAD_WINDOW_SIZE = 5;
+const AUDIO_REPAIR_CONTEXT_BEFORE = 3;
+const AUDIO_REPAIR_CONTEXT_AFTER = 4;
 const BACKGROUND_RETRY_COUNT = 1;
 const GENERIC_AUDIO_PREPARATION_ERROR = "无法准备当前句音频，请重试。";
+
+interface AudioRepairPreloadWindowOptions {
+  contextBefore?: number;
+  contextAfter?: number;
+}
 
 export function initialAudioPreloadAnchor(
   sentenceIds: string[],
@@ -50,6 +57,41 @@ export function audioPreloadWindow(
     return [];
   }
   return sentenceIds.slice(startIndex, startIndex + windowSize);
+}
+
+export function audioRepairPreloadWindow(
+  sentenceIds: string[],
+  anchorSentenceId: string | null,
+  visibleSentenceIds: string[] = [],
+  {
+    contextBefore = AUDIO_REPAIR_CONTEXT_BEFORE,
+    contextAfter = AUDIO_REPAIR_CONTEXT_AFTER,
+  }: AudioRepairPreloadWindowOptions = {},
+): string[] {
+  if (sentenceIds.length === 0) {
+    return [];
+  }
+
+  const repairAnchorSentenceId =
+    anchorSentenceId && visibleSentenceIds.includes(anchorSentenceId)
+      ? anchorSentenceId
+      : visibleSentenceIds.find((sentenceId) => sentenceIds.includes(sentenceId)) ??
+        anchorSentenceId;
+  if (!repairAnchorSentenceId) {
+    return [];
+  }
+
+  const anchorIndex = sentenceIds.indexOf(repairAnchorSentenceId);
+  if (anchorIndex < 0) {
+    return [];
+  }
+  const startIndex = Math.max(0, anchorIndex - Math.max(0, contextBefore));
+  const endIndex = Math.min(
+    sentenceIds.length,
+    anchorIndex + Math.max(0, contextAfter) + 1,
+  );
+
+  return sentenceIds.slice(startIndex, endIndex);
 }
 
 export class SentenceAudioElementCache<AudioElement extends CacheableAudioElement> {
@@ -130,6 +172,11 @@ export class SentenceAudioPreparationQueue {
       status: record?.status ?? "idle",
       errorMessage: record?.errorMessage ?? null,
     };
+  }
+
+  clear() {
+    this.preloadGeneration += 1;
+    this.records.clear();
   }
 
   async preloadWindow(sentenceIds: string[]): Promise<void> {

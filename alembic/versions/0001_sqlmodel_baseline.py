@@ -79,10 +79,15 @@ def upgrade() -> None:
         sa.Column('text', sa.Text(), nullable=False),
         sa.Column('audio_status', sa.String(length=16), nullable=False),
         sa.Column('audio_path', sa.Text(), nullable=True),
+        sa.Column('audio_duration_seconds', sa.Float(), nullable=True),
         sa.Column('error_message', sa.Text(), nullable=True),
         sa.CheckConstraint(
             "audio_status IN ('pending', 'ready', 'failed')",
             name='ck_sentences_audio_status',
+        ),
+        sa.CheckConstraint(
+            'audio_duration_seconds IS NULL OR audio_duration_seconds >= 0',
+            name='ck_sentences_audio_duration_seconds',
         ),
         sa.ForeignKeyConstraint(
             ['material_id'],
@@ -105,12 +110,17 @@ def upgrade() -> None:
         'reading_progress',
         sa.Column('material_id', sa.String(length=64), nullable=False),
         sa.Column('sentence_id', sa.String(length=64), nullable=False),
+        sa.Column('sentence_offset_seconds', sa.Float(), server_default='0', nullable=False),
         sa.Column('playback_rate', sa.Float(), nullable=False),
         sa.Column('playback_completed', sa.Integer(), nullable=False),
         sa.Column('updated_at', sa.DateTime(), nullable=False),
         sa.CheckConstraint(
             'playback_completed IN (0, 1)',
             name='ck_reading_progress_playback_completed',
+        ),
+        sa.CheckConstraint(
+            'sentence_offset_seconds >= 0',
+            name='ck_reading_progress_sentence_offset_seconds',
         ),
         sa.CheckConstraint('playback_rate > 0', name='ck_reading_progress_playback_rate'),
         sa.ForeignKeyConstraint(

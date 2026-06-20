@@ -1,17 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import shutil
 import subprocess
 import sys
+import wave
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 DIAGNOSTIC_LIMIT = 500
 WAV_HEADER_SIZE = 12
-TTS_WRAPPING_PUNCTUATION = '《》〈〉“”‘’「」『』﹁﹂﹃﹄【】〖〗〔〕（）［］｛｝'
-TTS_INPUT_TRANSLATION = str.maketrans(TTS_WRAPPING_PUNCTUATION, ' ' * len(TTS_WRAPPING_PUNCTUATION))
 
 
 class TTSGenerationError(RuntimeError):
@@ -35,11 +35,14 @@ class MacOSSayTTS:
         """为单个句子生成 WAV 音频。"""
         output_path = Path(output_path)
         self._validate_request(text, output_path)
+        tts_input = _normalize_tts_input(text)
+        if not tts_input:
+            raise TTSGenerationError('句子文本不包含可朗读内容。')
         command = self._command_for_generation()
         temporary_path = self._create_temporary_path(output_path)
 
         try:
-            self._run_say(command, text, temporary_path)
+            self._run_say(command, text, tts_input, temporary_path)
             self._validate_wav(temporary_path)
             self._publish(temporary_path, output_path)
         finally:
@@ -80,8 +83,7 @@ class MacOSSayTTS:
         except OSError as exc:
             raise TTSGenerationError('无法创建临时音频文件。') from exc
 
-    def _run_say(self, command: Path, text: str, temporary_path: Path) -> None:
-        tts_input = _normalize_tts_input(text)
+    def _run_say(self, command: Path, text: str, tts_input: str, temporary_path: Path) -> None:
         args = [
             str(command),
             '--output-file',
@@ -121,6 +123,14 @@ class MacOSSayTTS:
             raise TTSGenerationError('无法读取 macOS say 生成的音频。') from exc
         if len(header) < WAV_HEADER_SIZE or header[:4] != b'RIFF' or header[8:12] != b'WAVE':
             raise TTSGenerationError('macOS say 未生成有效的 WAV 音频。')
+        try:
+            with wave.open(str(temporary_path), 'rb') as audio_file:
+                frame_rate = audio_file.getframerate()
+                frame_count = audio_file.getnframes()
+        except (EOFError, OSError, wave.Error) as exc:
+            raise TTSGenerationError('macOS say 未生成有效的 WAV 音频。') from exc
+        if frame_rate <= 0 or frame_count <= 0:
+            raise TTSGenerationError('macOS say 未生成有效的 WAV 音频。')
 
     def _publish(self, temporary_path: Path, output_path: Path) -> None:
         try:
@@ -151,4 +161,10 @@ def _clean_diagnostic(stderr: str | None, *, sensitive_text: str) -> str:
 
 
 def _normalize_tts_input(text: str) -> str:
-    return text.translate(TTS_INPUT_TRANSLATION)
+    readable_text = ''.join(character if character.isalnum() else ' ' for character in text)
+    return ' '.join(readable_text.split())
+
+
+def tts_input_fingerprint(text: str) -> str:
+    """返回当前 TTS 输入归一化结果的稳定指纹。"""
+    return hashlib.sha256(_normalize_tts_input(text).encode()).hexdigest()

@@ -36,6 +36,7 @@ class SaveProgressRequest(BaseModel):
     """阅读进度保存请求。"""
 
     sentence_id: str
+    sentence_offset_seconds: float = 0
     playback_rate: float
     playback_completed: bool
 
@@ -75,16 +76,12 @@ def init_app_state() -> AppState:
 
 def get_storage_paths() -> StoragePaths:
     """返回当前应用的存储路径。"""
-    state = _state
-    assert state is not None, '应用状态尚未初始化'
-    return state.storage_paths
+    return init_app_state().storage_paths
 
 
 def get_material_library() -> MaterialLibrary:
     """返回当前应用的材料库实例。"""
-    state = _state
-    assert state is not None, '应用状态尚未初始化'
-    return state.material_library
+    return init_app_state().material_library
 
 
 def create_app() -> FastAPI:
@@ -131,6 +128,26 @@ def create_app() -> FastAPI:
         library.delete(material_id)
         return Response(status_code=204)
 
+    @app.delete('/api/materials/{material_id}/audio-cache', status_code=204)
+    def clear_material_audio_cache(
+        material_id: str,
+        *,
+        library: MaterialLibrary = Depends(get_material_library),
+    ) -> Response:
+        try:
+            library.clear_material_audio_cache(material_id)
+            return Response(status_code=204)
+        except MaterialNotFoundError as exc:
+            return JSONResponse(
+                status_code=404,
+                content={'detail': str(exc)},
+            )
+        except AudioGenerationError as exc:
+            return JSONResponse(
+                status_code=503,
+                content={'detail': str(exc)},
+            )
+
     @app.get('/api/materials/{material_id}/sentences/{sentence_id}/audio')
     def get_sentence_audio(
         material_id: str,
@@ -140,6 +157,7 @@ def create_app() -> FastAPI:
     ) -> Any:
         try:
             audio_path = library.get_or_generate_audio(material_id, sentence_id)
+            material = library.get(material_id)
         except AudioNotFoundError as exc:
             return JSONResponse(
                 status_code=404,
@@ -150,10 +168,22 @@ def create_app() -> FastAPI:
                 status_code=503,
                 content={'detail': str(exc)},
             )
+        duration = next(
+            (
+                sentence.audio_duration_seconds
+                for paragraph in material.paragraphs
+                for sentence in paragraph.sentences
+                if sentence.id == sentence_id
+            ),
+            None,
+        )
+        headers = {'Cache-Control': 'private, no-cache'}
+        if duration is not None:
+            headers['X-Read-Along-Audio-Duration-Seconds'] = f'{duration:g}'
         return FileResponse(
             audio_path,
             media_type='audio/wav',
-            headers={'Cache-Control': 'private, max-age=31536000, immutable'},
+            headers=headers,
         )
 
     @app.put('/api/materials/{material_id}/progress')
@@ -168,6 +198,7 @@ def create_app() -> FastAPI:
                 material_id,
                 request.sentence_id,
                 request.playback_rate,
+                sentence_offset_seconds=request.sentence_offset_seconds,
                 playback_completed=request.playback_completed,
             ).model_dump(mode='json')
         except MaterialNotFoundError as exc:

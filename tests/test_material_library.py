@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import threading
+import wave
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -29,7 +30,31 @@ from read_along.models import (
     SourceType,
 )
 from read_along.storage import StoragePaths
-from read_along.tts import TTSGenerationError
+from read_along.tts import TTSGenerationError, tts_input_fingerprint
+
+
+def write_wav(path: Path, *, duration_seconds: float = 1.25, sample_rate: int = 8000) -> None:
+    with wave.open(str(path), 'wb') as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(sample_rate)
+        audio.writeframes(b'\0\0' * int(duration_seconds * sample_rate))
+
+
+def expected_audio_path(paths: StoragePaths, material_id: str, sentence_id: str) -> Path:
+    return paths.audio / material_id / f'{sentence_id}.wav'
+
+
+def expected_audio_relative_path(material_id: str, sentence_id: str) -> str:
+    return f'{material_id}/{sentence_id}.wav'
+
+
+def write_audio_fingerprint(audio_path: Path, sentence_text: str) -> None:
+    audio_fingerprint_path(audio_path).write_text(tts_input_fingerprint(sentence_text))
+
+
+def audio_fingerprint_path(audio_path: Path) -> Path:
+    return audio_path.with_name(f'{audio_path.name}.tts-input')
 
 
 def material_library(tmp_path: Path) -> tuple[MaterialLibrary, StoragePaths]:
@@ -213,11 +238,16 @@ def test_shelf_and_progress_follow_recent_activity(tmp_path: Path) -> None:
     shelf = library.list_shelf()
 
     assert progress.playback_rate == 1.25
+    assert progress.sentence_offset_seconds == 0
     assert [item.id for item in shelf] == [first.material.id, second.material.id]
     assert shelf[0].progress is not None
     assert shelf[0].playback_position is not None
     assert shelf[0].playback_position.sentence_index == 1
     assert shelf[0].playback_position.sentence_count == 1
+    assert shelf[0].playback_time_position is not None
+    assert shelf[0].playback_time_position.elapsed_seconds == 0
+    assert shelf[0].playback_time_position.total_seconds > 0
+    assert shelf[0].playback_time_position.estimated is True
     assert shelf[0].primary_source.source_uri == 'https://example.com/first'
 
 
@@ -230,6 +260,7 @@ def test_shelf_without_progress_has_no_playback_position(tmp_path: Path) -> None
     assert shelf[0].id == saved.material.id
     assert shelf[0].progress is None
     assert shelf[0].playback_position is None
+    assert shelf[0].playback_time_position is None
 
 
 def test_detail_reports_current_sentence_playback_position(tmp_path: Path) -> None:
@@ -243,6 +274,56 @@ def test_detail_reports_current_sentence_playback_position(tmp_path: Path) -> No
     assert detail.playback_position is not None
     assert detail.playback_position.sentence_index == 2
     assert detail.playback_position.sentence_count == 3
+    assert detail.playback_time_position is not None
+    assert detail.playback_time_position.estimated is True
+
+
+def test_detail_reports_stable_material_navigation_by_creation_order(tmp_path: Path) -> None:
+    library, _ = material_library(tmp_path)
+    first = library.save(url_draft(url='https://example.com/first', title='第一篇', sentences=('甲。',)))
+    second = library.save(url_draft(url='https://example.com/second', title='第二篇', sentences=('乙。',)))
+    third = library.save(url_draft(url='https://example.com/third', title='第三篇', sentences=('丙。',)))
+
+    library.save_progress(first.material.id, first.material.paragraphs[0].sentences[0].id, 1.0)
+    detail = library.get(second.material.id)
+
+    assert detail.navigation.previous is not None
+    assert detail.navigation.previous.id == first.material.id
+    assert detail.navigation.previous.title == '第一篇'
+    assert detail.navigation.next is not None
+    assert detail.navigation.next.id == third.material.id
+    assert detail.navigation.next.title == '第三篇'
+
+
+def test_playback_time_position_uses_real_durations_when_available(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, _ = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('第一句。', '第二句。')))
+    sentences = material.material.paragraphs[0].sentences
+    durations = {'第一句。': 4.0, '第二句。': 6.0}
+
+    def generate(text: str, output_path: Path) -> Path:
+        write_wav(output_path, duration_seconds=durations[text])
+        return output_path
+
+    monkeypatch.setattr(library.tts, 'generate', generate)
+    for sentence in sentences:
+        library.get_or_generate_audio(material.material.id, sentence.id)
+
+    library.save_progress(
+        material.material.id,
+        sentences[1].id,
+        1.0,
+        sentence_offset_seconds=2.0,
+    )
+    detail = library.get(material.material.id)
+
+    assert detail.playback_time_position is not None
+    assert detail.playback_time_position.elapsed_seconds == pytest.approx(6.0)
+    assert detail.playback_time_position.total_seconds == pytest.approx(10.0)
+    assert detail.playback_time_position.estimated is False
 
 
 def test_save_progress_persists_playback_completed_state(tmp_path: Path) -> None:
@@ -254,13 +335,16 @@ def test_save_progress_persists_playback_completed_state(tmp_path: Path) -> None
         material.material.id,
         last_sentence.id,
         1.5,
+        sentence_offset_seconds=4.25,
         playback_completed=True,
     )
     reopened = MaterialLibrary(library.storage_paths).get(material.material.id)
 
     assert progress.playback_completed is True
+    assert progress.sentence_offset_seconds == 4.25
     assert reopened.progress is not None
     assert reopened.progress.playback_completed is True
+    assert reopened.progress.sentence_offset_seconds == 4.25
 
 
 def test_save_progress_validates_material_sentence_and_rate(tmp_path: Path) -> None:
@@ -283,6 +367,13 @@ def test_save_progress_validates_material_sentence_and_rate(tmp_path: Path) -> N
             first.material.paragraphs[0].sentences[0].id,
             0,
         )
+    with pytest.raises(InvalidProgressError, match='句内播放位置'):
+        library.save_progress(
+            first.material.id,
+            first.material.paragraphs[0].sentences[0].id,
+            1.0,
+            sentence_offset_seconds=-0.1,
+        )
     with pytest.raises(InvalidProgressError, match='最后一句'):
         library.save_progress(
             multi_sentence.material.id,
@@ -304,20 +395,22 @@ def test_get_or_generate_audio_generates_and_persists_ready_state(
 
     def generate(text: str, output_path: Path) -> Path:
         calls.append((text, output_path))
-        output_path.write_bytes(b'RIFFaudioWAVE')
+        write_wav(output_path, duration_seconds=1.75)
         return output_path
 
     monkeypatch.setattr(library.tts, 'generate', generate)
 
     audio_path = library.get_or_generate_audio(material.material.id, sentence.id)
 
-    expected_path = paths.audio / material.material.id / f'{sentence.id}.wav'
+    expected_path = expected_audio_path(paths, material.material.id, sentence.id)
     reopened = library.get(material.material.id)
     reopened_sentence = reopened.paragraphs[0].sentences[0]
     assert audio_path == expected_path
     assert calls == [('需要朗读。', expected_path)]
     assert reopened_sentence.audio_status is AudioStatus.READY
-    assert reopened_sentence.audio_path == f'{material.material.id}/{sentence.id}.wav'
+    assert reopened_sentence.audio_path == expected_audio_relative_path(material.material.id, sentence.id)
+    assert reopened_sentence.audio_duration_seconds == pytest.approx(1.75)
+    assert audio_fingerprint_path(expected_path).read_text() == tts_input_fingerprint(sentence.text)
     assert reopened_sentence.error_message is None
     assert reopened.updated_at == original_updated_at
 
@@ -334,7 +427,7 @@ def test_get_or_generate_audio_reuses_existing_cache(
     def generate(text: str, output_path: Path) -> Path:
         nonlocal calls
         calls += 1
-        output_path.write_bytes(b'RIFFaudioWAVE')
+        write_wav(output_path)
         return output_path
 
     monkeypatch.setattr(library.tts, 'generate', generate)
@@ -346,6 +439,37 @@ def test_get_or_generate_audio_reuses_existing_cache(
     assert calls == 1
 
 
+def test_clear_material_audio_cache_removes_files_and_resets_sentence_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, paths = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('第一句。', '第二句。')))
+    sentences = material.material.paragraphs[0].sentences
+
+    def generate(text: str, output_path: Path) -> Path:
+        write_wav(output_path)
+        return output_path
+
+    monkeypatch.setattr(library.tts, 'generate', generate)
+    for sentence in sentences:
+        library.get_or_generate_audio(material.material.id, sentence.id)
+    audio_dir = paths.audio / material.material.id
+    assert audio_dir.is_dir()
+
+    library.clear_material_audio_cache(material.material.id)
+
+    reopened_sentences = library.get(material.material.id).paragraphs[0].sentences
+    assert not audio_dir.exists()
+    assert [sentence.audio_status for sentence in reopened_sentences] == [
+        AudioStatus.PENDING,
+        AudioStatus.PENDING,
+    ]
+    assert [sentence.audio_path for sentence in reopened_sentences] == [None, None]
+    assert [sentence.audio_duration_seconds for sentence in reopened_sentences] == [None, None]
+    assert [sentence.error_message for sentence in reopened_sentences] == [None, None]
+
+
 def test_get_or_generate_audio_repairs_state_when_cache_exists(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -353,9 +477,10 @@ def test_get_or_generate_audio_repairs_state_when_cache_exists(
     library, paths = material_library(tmp_path)
     material = library.save(url_draft(sentences=('已经生成。',)))
     sentence = material.material.paragraphs[0].sentences[0]
-    expected_path = paths.audio / material.material.id / f'{sentence.id}.wav'
-    expected_path.parent.mkdir()
-    expected_path.write_bytes(b'RIFFaudioWAVE')
+    expected_path = expected_audio_path(paths, material.material.id, sentence.id)
+    expected_path.parent.mkdir(parents=True)
+    write_wav(expected_path, duration_seconds=2.0)
+    write_audio_fingerprint(expected_path, sentence.text)
     with sqlite3.connect(paths.database) as connection:
         connection.execute(
             """
@@ -377,8 +502,37 @@ def test_get_or_generate_audio_repairs_state_when_cache_exists(
     reopened_sentence = library.get(material.material.id).paragraphs[0].sentences[0]
     assert audio_path == expected_path
     assert reopened_sentence.audio_status is AudioStatus.READY
-    assert reopened_sentence.audio_path == f'{material.material.id}/{sentence.id}.wav'
+    assert reopened_sentence.audio_path == expected_audio_relative_path(material.material.id, sentence.id)
+    assert reopened_sentence.audio_duration_seconds == pytest.approx(2.0)
     assert reopened_sentence.error_message is None
+
+
+def test_get_or_generate_audio_regenerates_cache_without_current_tts_fingerprint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, paths = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('“事实判断”和“价值判断”只是一种分类。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    expected_path = expected_audio_path(paths, material.material.id, sentence.id)
+    expected_path.parent.mkdir(parents=True)
+    write_wav(expected_path, duration_seconds=0.25)
+    calls: list[Path] = []
+
+    def generate(text: str, output_path: Path) -> Path:
+        calls.append(output_path)
+        write_wav(output_path, duration_seconds=1.25)
+        return output_path
+
+    monkeypatch.setattr(library.tts, 'generate', generate)
+
+    audio_path = library.get_or_generate_audio(material.material.id, sentence.id)
+
+    ready_sentence = library.get(material.material.id).paragraphs[0].sentences[0]
+    assert audio_path == expected_path
+    assert calls == [expected_path]
+    assert ready_sentence.audio_duration_seconds == pytest.approx(1.25)
+    assert audio_fingerprint_path(expected_path).read_text() == tts_input_fingerprint(sentence.text)
 
 
 def test_get_or_generate_audio_regenerates_when_ready_cache_is_missing(
@@ -388,7 +542,7 @@ def test_get_or_generate_audio_regenerates_when_ready_cache_is_missing(
     library, paths = material_library(tmp_path)
     material = library.save(url_draft(sentences=('缓存丢失。',)))
     sentence = material.material.paragraphs[0].sentences[0]
-    relative_path = f'{material.material.id}/{sentence.id}.wav'
+    relative_path = expected_audio_relative_path(material.material.id, sentence.id)
     with sqlite3.connect(paths.database) as connection:
         connection.execute(
             """
@@ -403,7 +557,7 @@ def test_get_or_generate_audio_regenerates_when_ready_cache_is_missing(
     def generate(text: str, output_path: Path) -> Path:
         nonlocal calls
         calls += 1
-        output_path.write_bytes(b'RIFFaudioWAVE')
+        write_wav(output_path)
         return output_path
 
     monkeypatch.setattr(library.tts, 'generate', generate)
@@ -429,7 +583,7 @@ def test_get_or_generate_audio_records_failure_and_retries(
         attempts += 1
         if attempts == 1:
             raise TTSGenerationError(f'暂时失败：{paths.home}；{text}')
-        output_path.write_bytes(b'RIFFaudioWAVE')
+        write_wav(output_path)
         return output_path
 
     monkeypatch.setattr(library.tts, 'generate', generate)
@@ -451,7 +605,32 @@ def test_get_or_generate_audio_records_failure_and_retries(
     assert audio_path.is_file()
     assert attempts == 2
     assert ready_sentence.audio_status is AudioStatus.READY
+    assert ready_sentence.audio_duration_seconds == pytest.approx(1.25)
     assert ready_sentence.error_message is None
+
+
+def test_get_or_generate_audio_rejects_unreadable_wav_duration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, _ = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('坏音频。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+
+    def generate(text: str, output_path: Path) -> Path:
+        output_path.write_bytes(b'RIFFaudioWAVE')
+        return output_path
+
+    monkeypatch.setattr(library.tts, 'generate', generate)
+
+    with pytest.raises(AudioGenerationError, match='无法读取句子音频时长。'):
+        library.get_or_generate_audio(material.material.id, sentence.id)
+
+    failed_sentence = library.get(material.material.id).paragraphs[0].sentences[0]
+    assert failed_sentence.audio_status is AudioStatus.FAILED
+    assert failed_sentence.audio_path is None
+    assert failed_sentence.audio_duration_seconds is None
+    assert failed_sentence.error_message == '无法读取句子音频时长。'
 
 
 def test_get_or_generate_audio_hides_missing_material_and_sentence_identity(tmp_path: Path) -> None:
@@ -596,7 +775,7 @@ def test_get_or_generate_audio_deduplicates_concurrent_requests_for_same_sentenc
             second_generation_started.wait(timeout=0.5)
         else:
             second_generation_started.set()
-        output_path.write_bytes(b'RIFFaudioWAVE')
+        write_wav(output_path)
         return output_path
 
     monkeypatch.setattr(library.tts, 'generate', generate)
@@ -620,7 +799,7 @@ def test_get_or_generate_audio_allows_different_sentences_to_generate_concurrent
 
     def generate(text: str, output_path: Path) -> Path:
         generation_barrier.wait()
-        output_path.write_bytes(b'RIFFaudioWAVE')
+        write_wav(output_path)
         return output_path
 
     monkeypatch.setattr(library.tts, 'generate', generate)

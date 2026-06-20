@@ -383,7 +383,7 @@ select:disabled {
 }
 
 .import-panel-open {
-  max-height: 620px;
+  max-height: 760px;
   border-color: var(--color-border);
   opacity: 1;
   pointer-events: auto;
@@ -526,6 +526,52 @@ select:disabled {
   cursor: pointer;
 }
 
+.pdf-drop-zone {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.pdf-drop-zone-active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.pdf-drop-zone-ready {
+  border-style: solid;
+}
+
+.pdf-drop-copy {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.pdf-drop-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdf-drop-copy svg {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  color: var(--color-accent);
+}
+
 .form-hint,
 .feedback {
   margin: 0;
@@ -659,8 +705,8 @@ select:disabled {
 
 .playback-position {
   display: grid;
-  max-width: 360px;
-  grid-template-columns: minmax(80px, 1fr) max-content;
+  max-width: 430px;
+  grid-template-columns: minmax(80px, 1fr) minmax(0, max-content);
   gap: 9px;
   align-items: center;
   color: var(--color-text-muted);
@@ -681,6 +727,24 @@ select:disabled {
   min-width: 3px;
   border-radius: inherit;
   background: var(--color-accent);
+}
+
+.position-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.position-primary {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.position-sentence-muted {
+  color: var(--color-text-subtle);
+  font-size: 0.66rem;
 }
 
 .material-new {
@@ -1002,6 +1066,40 @@ select:disabled {
   line-height: 1.5;
 }
 
+.reading-audio-repair {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border);
+}
+
+.reading-audio-repair strong {
+  font-size: 0.82rem;
+}
+
+.reading-audio-repair p {
+  margin: 4px 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.reading-audio-repair .button {
+  width: 100%;
+}
+
+.reading-audio-repair-status {
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--color-accent-contrast);
+  background: color-mix(in srgb, var(--color-accent) 88%, var(--color-surface));
+}
+
+.reading-audio-repair-error {
+  color: var(--color-error);
+  background: var(--color-error-soft);
+}
+
 .reader-state {
   margin-top: 56px;
 }
@@ -1122,7 +1220,7 @@ select:disabled {
   bottom: 18px;
   left: 50%;
   display: grid;
-  width: min(760px, calc(100% - 28px));
+  width: min(960px, calc(100% - 28px));
   grid-template-columns: minmax(0, 1fr) max-content;
   gap: 18px;
   align-items: center;
@@ -1155,7 +1253,7 @@ select:disabled {
   white-space: nowrap;
 }
 
-.player-error .inline-action {
+.player-position .inline-action {
   margin-left: 7px;
   padding: 0;
   border: 0;
@@ -1176,8 +1274,37 @@ select:disabled {
   gap: 7px;
 }
 
+.player-timeline {
+  display: grid;
+  flex: 1 1 310px;
+  min-width: 280px;
+  grid-template-columns: max-content minmax(150px, 1fr) max-content;
+  gap: 8px;
+  align-items: center;
+}
+
+.player-timeline input {
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--color-accent);
+}
+
+.timeline-time {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.player-next-prompt {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .player-icon-button,
-.playback-rate select {
+.playback-rate-button {
   border-color: var(--color-border);
   background: var(--color-surface);
 }
@@ -1198,6 +1325,7 @@ select:disabled {
 }
 
 .playback-rate {
+  position: relative;
   display: grid;
   gap: 3px;
   color: var(--color-text-muted);
@@ -1205,15 +1333,72 @@ select:disabled {
   font-weight: 700;
 }
 
-.playback-rate select {
-  min-width: 72px;
+.playback-rate-button {
+  display: inline-flex;
+  min-width: 96px;
   min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   padding: 0 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   color: var(--color-text);
-  text-align: center;
+  font: inherit;
+  font-size: 0.78rem;
   cursor: pointer;
+}
+
+.playback-rate-button svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.playback-rate-menu {
+  position: absolute;
+  z-index: 12;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: grid;
+  min-width: 116px;
+  padding: 4px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-strong);
+  box-shadow: var(--shadow-dock);
+}
+
+.playback-rate-menu button {
+  display: grid;
+  min-height: 36px;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  gap: 8px;
+  align-items: center;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.playback-rate-menu button:hover,
+.playback-rate-menu button:focus-visible {
+  color: var(--color-text);
+  background: var(--color-surface-subtle);
+}
+
+.playback-rate-menu button[aria-selected="true"] {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.playback-rate-menu svg {
+  width: 0.95rem;
+  height: 0.95rem;
 }
 
 .return-current {
@@ -1380,20 +1565,30 @@ select:disabled {
 
   .player-controls {
     display: grid;
-    grid-template-columns: minmax(108px, 1fr) repeat(3, 44px);
+    grid-template-columns: repeat(5, 44px);
+    justify-content: center;
     gap: 6px;
   }
 
   .playback-rate {
     display: grid;
-    grid-column: 1;
+    grid-column: 1 / -1;
     grid-row: 1;
-    grid-template-columns: max-content minmax(0, 1fr);
+    grid-template-columns: max-content minmax(92px, 130px);
+    justify-content: center;
     align-items: center;
     gap: 6px;
   }
 
-  .playback-rate select {
+  .player-timeline {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
+  }
+
+  .playback-rate-button {
     width: 100%;
     min-width: 0;
   }

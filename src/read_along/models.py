@@ -88,6 +88,7 @@ class Sentence(DataModel):
     text: str
     audio_status: AudioStatus
     audio_path: str | None
+    audio_duration_seconds: float | None = Field(default=None, ge=0)
     error_message: str | None
 
 
@@ -100,6 +101,7 @@ class SentenceResponse(DataModel):
     index: int
     text: str
     audio_status: AudioStatus
+    audio_duration_seconds: float | None = Field(default=None, ge=0)
     error_message: str | None
 
     @classmethod
@@ -112,6 +114,7 @@ class SentenceResponse(DataModel):
             index=sentence.index,
             text=sentence.text,
             audio_status=sentence.audio_status,
+            audio_duration_seconds=sentence.audio_duration_seconds,
             error_message=sentence.error_message,
         )
 
@@ -121,6 +124,7 @@ class ReadingProgress(DataModel):
 
     material_id: str
     sentence_id: str
+    sentence_offset_seconds: float = Field(ge=0)
     playback_rate: float = Field(gt=0)
     playback_completed: bool
     updated_at: datetime
@@ -131,6 +135,25 @@ class PlaybackPosition(DataModel):
 
     sentence_index: int = Field(gt=0)
     sentence_count: int = Field(gt=0)
+
+
+class PlaybackTimePosition(DataModel):
+    """阅读材料中的时间式朗读位置。"""
+
+    elapsed_seconds: float = Field(ge=0)
+    total_seconds: float = Field(ge=0)
+    estimated: bool
+
+
+class MaterialNavigationItem(Material):
+    """相邻阅读材料摘要。"""
+
+
+class MaterialNavigation(DataModel):
+    """阅读页相邻材料导航。"""
+
+    previous: MaterialNavigationItem | None
+    next: MaterialNavigationItem | None
 
 
 class ParagraphDetail(Paragraph):
@@ -163,6 +186,7 @@ class MaterialSummary(Material):
     primary_source: MaterialSource
     progress: ReadingProgress | None
     playback_position: PlaybackPosition | None
+    playback_time_position: PlaybackTimePosition | None
 
 
 class MaterialDetail(Material):
@@ -172,6 +196,8 @@ class MaterialDetail(Material):
     sources: list[MaterialSource]
     progress: ReadingProgress | None
     playback_position: PlaybackPosition | None
+    playback_time_position: PlaybackTimePosition | None
+    navigation: MaterialNavigation
     paragraphs: list[ParagraphDetail]
 
 
@@ -182,6 +208,8 @@ class MaterialDetailResponse(Material):
     sources: list[MaterialSource]
     progress: ReadingProgress | None
     playback_position: PlaybackPosition | None
+    playback_time_position: PlaybackTimePosition | None
+    navigation: MaterialNavigation
     paragraphs: list[ParagraphDetailResponse]
 
     @classmethod
@@ -197,6 +225,8 @@ class MaterialDetailResponse(Material):
             sources=material.sources,
             progress=material.progress,
             playback_position=material.playback_position,
+            playback_time_position=material.playback_time_position,
+            navigation=material.navigation,
             paragraphs=[ParagraphDetailResponse.from_detail(paragraph) for paragraph in material.paragraphs],
         )
 

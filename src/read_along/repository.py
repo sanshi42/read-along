@@ -73,6 +73,17 @@ class Repository:
         ).fetchall()
         return _rows_model(rows, Material)
 
+    def list_materials_by_creation(self, connection: sqlite3.Connection) -> list[Material]:
+        """按稳定导入顺序列出阅读材料。"""
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM materials
+            ORDER BY created_at ASC, id ASC
+            """
+        ).fetchall()
+        return _rows_model(rows, Material)
+
     def insert_material(
         self,
         connection: sqlite3.Connection,
@@ -291,16 +302,17 @@ class Repository:
         sentence_id: str,
         audio_status: str,
         audio_path: str | None,
+        audio_duration_seconds: float | None,
         error_message: str | None,
     ) -> None:
         """更新单句音频状态。"""
         connection.execute(
             """
             UPDATE sentences
-            SET audio_status = ?, audio_path = ?, error_message = ?
+            SET audio_status = ?, audio_path = ?, audio_duration_seconds = ?, error_message = ?
             WHERE id = ? AND material_id = ?
             """,
-            (audio_status, audio_path, error_message, sentence_id, material_id),
+            (audio_status, audio_path, audio_duration_seconds, error_message, sentence_id, material_id),
         )
 
     def sentence_belongs_to_material(
@@ -351,6 +363,7 @@ class Repository:
         *,
         material_id: str,
         sentence_id: str,
+        sentence_offset_seconds: float,
         playback_rate: float,
         playback_completed: bool,
         updated_at: str,
@@ -361,17 +374,19 @@ class Repository:
             INSERT INTO reading_progress (
                 material_id,
                 sentence_id,
+                sentence_offset_seconds,
                 playback_rate,
                 playback_completed,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT (material_id) DO UPDATE SET
                 sentence_id = excluded.sentence_id,
+                sentence_offset_seconds = excluded.sentence_offset_seconds,
                 playback_rate = excluded.playback_rate,
                 playback_completed = excluded.playback_completed,
                 updated_at = excluded.updated_at
             """,
-            (material_id, sentence_id, playback_rate, playback_completed, updated_at),
+            (material_id, sentence_id, sentence_offset_seconds, playback_rate, playback_completed, updated_at),
         )
 
     def get_progress(

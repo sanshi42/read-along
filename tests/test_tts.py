@@ -4,6 +4,7 @@ import math
 import os
 import stat
 import subprocess
+import wave
 from pathlib import Path
 
 import pytest
@@ -13,8 +14,11 @@ from read_along.tts import MacOSSayTTS, TTSGenerationError
 
 
 def write_wav(path: Path, payload: bytes = b'audio') -> None:
-    size = 4 + len(payload)
-    path.write_bytes(b'RIFF' + size.to_bytes(4, 'little') + b'WAVE' + payload)
+    with wave.open(str(path), 'wb') as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(8000)
+        audio.writeframes(payload or b'\0\0')
 
 
 def executable(tmp_path: Path) -> Path:
@@ -87,7 +91,7 @@ def test_generate_creates_private_pcm_wav_from_standard_input(
     ]
     assert temporary_path.parent == tmp_path
     assert temporary_path.name.startswith('.sentence.')
-    assert captured['input'] == '  忠实正文。  '
+    assert captured['input'] == '忠实正文'
     assert captured['stdout'] == subprocess.DEVNULL
     assert captured['stderr'] == subprocess.PIPE
     assert captured['text'] is True
@@ -101,8 +105,18 @@ def test_generate_creates_private_pcm_wav_from_standard_input(
 @pytest.mark.parametrize(
     ('source_text', 'tts_input'),
     [
-        ('演过《奋斗》里的华子。', '演过 奋斗 里的华子。'),
-        ('和“伟大的灵魂都是雌雄同体”是一个意思。', '和 伟大的灵魂都是雌雄同体 是一个意思。'),
+        ('演过《奋斗》里的华子。', '演过 奋斗 里的华子'),
+        ('和“伟大的灵魂都是雌雄同体”是一个意思。', '和 伟大的灵魂都是雌雄同体 是一个意思'),
+        ('“信仰”与“知识”的区别可能更相关。', '信仰 与 知识 的区别可能更相关'),
+        ('GPT-5，v2.1', 'GPT 5 v2 1'),
+        (
+            '“事实判断”和“价值判断”只是一种分类，但这不是唯一有效的分类方式',
+            '事实判断 和 价值判断 只是一种分类 但这不是唯一有效的分类方式',
+        ),
+        (
+            '最著名的尝试大概是17世纪法国思想家帕斯卡尔（Blaise Pascal），他提出过一个思想实验，叫做与“上帝打赌”。',
+            '最著名的尝试大概是17世纪法国思想家帕斯卡尔 Blaise Pascal 他提出过一个思想实验 叫做与 上帝打赌',
+        ),
     ],
 )
 def test_generate_normalizes_wrapping_punctuation_before_running_say(
@@ -131,6 +145,17 @@ def test_generate_normalizes_wrapping_punctuation_before_running_say(
     MacOSSayTTS(command=command).generate(source_text, output_path)
 
     assert captured['input'] == tts_input
+
+
+def test_generate_rejects_sentence_without_readable_characters_before_running_say(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = configured_tts(tmp_path, monkeypatch)
+    monkeypatch.setattr(tts.subprocess, 'run', lambda *args, **kwargs: pytest.fail('不应运行 say'))
+
+    with pytest.raises(TTSGenerationError, match='句子文本不包含可朗读内容'):
+        adapter.generate(' “”…？！—— ', tmp_path / 'sentence.wav')
 
 
 @pytest.mark.parametrize('timeout', [0, -1, math.inf, math.nan])
@@ -384,6 +409,28 @@ def test_generate_rejects_invalid_wav_and_cleans_temporary_file(
         return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
 
     monkeypatch.setattr(tts.subprocess, 'run', write_invalid)
+
+    with pytest.raises(TTSGenerationError, match='macOS say 未生成有效的 WAV 音频'):
+        adapter.generate('正文。', tmp_path / 'sentence.wav')
+
+    assert not (tmp_path / 'sentence.wav').exists()
+    assert list(tmp_path.glob('.sentence.*.wav')) == []
+
+
+def test_generate_rejects_wav_without_audio_frames(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = configured_tts(tmp_path, monkeypatch)
+
+    def write_empty_wav(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        with wave.open(str(Path(args[2])), 'wb') as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(8000)
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
+
+    monkeypatch.setattr(tts.subprocess, 'run', write_empty_wav)
 
     with pytest.raises(TTSGenerationError, match='macOS say 未生成有效的 WAV 音频'):
         adapter.generate('正文。', tmp_path / 'sentence.wav')
