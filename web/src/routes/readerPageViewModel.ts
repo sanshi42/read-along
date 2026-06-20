@@ -15,6 +15,20 @@ export interface ReaderNavContextInput {
 }
 
 export type SentencePointerAction = "select" | "play";
+export type ZenModeShortcutAction = "toggle" | "exit";
+
+export interface ReaderShortcutInput {
+  key: string;
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  shiftKey?: boolean;
+}
+
+export interface ZenModeShortcutContext {
+  zenMode: boolean;
+  interactiveTarget: boolean;
+}
 
 export function normalizeReadingTitle(title: string): string {
   return title.replace(/\.pdf$/i, "").trim();
@@ -22,6 +36,22 @@ export function normalizeReadingTitle(title: string): string {
 
 export function sentencePointerAction(clickCount: number): SentencePointerAction {
   return clickCount >= 2 ? "play" : "select";
+}
+
+export function zenModeShortcutAction(
+  input: ReaderShortcutInput,
+  context: ZenModeShortcutContext,
+): ZenModeShortcutAction | null {
+  if (input.altKey || input.ctrlKey || input.metaKey) {
+    return null;
+  }
+  if (input.key === "Escape") {
+    return context.zenMode ? "exit" : null;
+  }
+  if (context.interactiveTarget) {
+    return null;
+  }
+  return input.key.toLowerCase() === "z" ? "toggle" : null;
 }
 
 export function shouldShowReaderNavContext({

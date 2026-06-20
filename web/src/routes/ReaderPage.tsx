@@ -8,6 +8,8 @@ import {
   Gauge,
   LocateFixed,
   LoaderCircle,
+  Maximize2,
+  Minimize2,
   Pause,
   Play,
   Repeat,
@@ -71,6 +73,7 @@ import {
   sentencePointerAction,
   scrollTargetForRectWithinReaderChrome,
   shouldShowReaderNavContext,
+  zenModeShortcutAction,
 } from "./readerPageViewModel";
 
 type PlaybackStatus = "idle" | "loading" | "playing" | "paused";
@@ -184,6 +187,8 @@ export function ReaderPage({
   const [pendingSeekSeconds, setPendingSeekSeconds] = useState<number | null>(null);
   const [audioRepairStatus, setAudioRepairStatus] = useState<AudioRepairStatus>("idle");
   const [materialReloadKey, setMaterialReloadKey] = useState(0);
+  const [zenMode, setZenMode] = useState(false);
+  const [zenFullscreenNotice, setZenFullscreenNotice] = useState(false);
   const currentSentenceIdRef = useRef<string | null>(null);
   const currentSentenceOffsetSecondsRef = useRef(0);
   const playbackRateRef = useRef(1);
@@ -202,6 +207,9 @@ export function ReaderPage({
   const progressGenerationRef = useRef(0);
   const lastProgressSaveAtRef = useRef(0);
   const autoplayOnMaterialLoadRef = useRef(false);
+  const zenModeRef = useRef(false);
+  const zenFullscreenActiveRef = useRef(false);
+  const zenNoticeTimeoutRef = useRef<number | null>(null);
   const followCurrentRef = useRef(true);
   const userScrollIntentUntilRef = useRef(0);
   const readerNavRef = useRef<HTMLElement | null>(null);
@@ -277,6 +285,7 @@ export function ReaderPage({
       : null;
 
   useEffect(() => {
+    void exitZenMode({ returnFocus: false });
     discardPlayback();
     audioElementCacheRef.current?.clear();
     resetProgressSaving();
@@ -312,6 +321,8 @@ export function ReaderPage({
     setPlaybackError(null);
     setProgressError(null);
     setAudioRepairStatus("idle");
+    clearZenFullscreenNotice();
+    zenFullscreenActiveRef.current = false;
     setShowReturnToCurrent(false);
     setShowReaderContext(false);
     updatePlaybackStatus("idle");
@@ -413,6 +424,24 @@ export function ReaderPage({
   }, [playbackMode]);
 
   useEffect(() => {
+    function handleFullscreenChange() {
+      if (
+        zenFullscreenActiveRef.current &&
+        zenModeRef.current &&
+        !document.fullscreenElement
+      ) {
+        zenFullscreenActiveRef.current = false;
+        setZenModeState(false);
+      }
+    }
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!material || !autoplayOnMaterialLoadRef.current) {
       return;
     }
@@ -507,15 +536,35 @@ export function ReaderPage({
 
   useEffect(() => {
     function handleGlobalShortcut(event: KeyboardEvent) {
-      const target = event.target as HTMLElement | null;
-      if (
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const interactiveTarget =
         target &&
         (isInteractiveShortcutTarget(target.tagName, {
           role: target.getAttribute("role"),
           contentEditable: target.getAttribute("contenteditable"),
         }) ||
-          readingPreferencesRef.current?.contains(target))
-      ) {
+          readingPreferencesRef.current?.contains(target) ||
+          playbackRateMenuRef.current?.contains(target) ||
+          playbackModeMenuRef.current?.contains(target));
+      const zenShortcut = zenModeShortcutAction(event, {
+        zenMode: zenModeRef.current,
+        interactiveTarget: Boolean(interactiveTarget),
+      });
+      if (zenShortcut === "exit") {
+        event.preventDefault();
+        void exitZenMode();
+        return;
+      }
+      if (zenShortcut === "toggle") {
+        event.preventDefault();
+        if (zenModeRef.current) {
+          void exitZenMode();
+        } else {
+          void enterZenMode();
+        }
+        return;
+      }
+      if (interactiveTarget) {
         return;
       }
       if (event.key === "ArrowLeft") {
@@ -577,6 +626,9 @@ export function ReaderPage({
       audioPreparationRef.current = null;
       audioElementCacheRef.current?.clear();
       audioElementCacheRef.current = null;
+      if (zenNoticeTimeoutRef.current !== null) {
+        window.clearTimeout(zenNoticeTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -1109,6 +1161,9 @@ export function ReaderPage({
     if (!targetMaterialId || targetMaterialId === materialId) {
       return;
     }
+    if (zenModeRef.current) {
+      void exitZenMode({ returnFocus: false });
+    }
     queueCurrentProgress();
     autoplayOnMaterialLoadRef.current =
       options.autoplay ??
@@ -1253,6 +1308,114 @@ export function ReaderPage({
     setShowReadingPreferences(false);
   }
 
+  function clearZenFullscreenNotice() {
+    if (zenNoticeTimeoutRef.current !== null) {
+      window.clearTimeout(zenNoticeTimeoutRef.current);
+      zenNoticeTimeoutRef.current = null;
+    }
+    setZenFullscreenNotice(false);
+  }
+
+  function showZenFullscreenFallbackNotice() {
+    if (zenNoticeTimeoutRef.current !== null) {
+      window.clearTimeout(zenNoticeTimeoutRef.current);
+    }
+    setZenFullscreenNotice(true);
+    zenNoticeTimeoutRef.current = window.setTimeout(() => {
+      zenNoticeTimeoutRef.current = null;
+      setZenFullscreenNotice(false);
+    }, 4200);
+  }
+
+  function setZenModeState(enabled: boolean) {
+    zenModeRef.current = enabled;
+    setZenMode(enabled);
+    if (!enabled) {
+      clearZenFullscreenNotice();
+    }
+  }
+
+  async function enterZenMode() {
+    if (!material) {
+      return;
+    }
+    setShowReadingPreferences(false);
+    setShowPlaybackRateMenu(false);
+    setShowPlaybackModeMenu(false);
+    setZenModeState(true);
+    followCurrentRef.current = true;
+    setShowReturnToCurrent(false);
+    scheduleScrollToCurrent("smooth");
+
+    const fullscreenTarget = document.documentElement;
+    if (!fullscreenTarget.requestFullscreen) {
+      showZenFullscreenFallbackNotice();
+      return;
+    }
+    if (document.fullscreenElement) {
+      zenFullscreenActiveRef.current = true;
+      return;
+    }
+    try {
+      await fullscreenTarget.requestFullscreen();
+      if (zenModeRef.current && document.fullscreenElement) {
+        zenFullscreenActiveRef.current = true;
+      } else if (zenModeRef.current) {
+        showZenFullscreenFallbackNotice();
+      }
+    } catch {
+      if (zenModeRef.current) {
+        showZenFullscreenFallbackNotice();
+      }
+    }
+  }
+
+  async function exitZenMode(
+    options: { exitFullscreen?: boolean; returnFocus?: boolean } = {},
+  ) {
+    const exitFullscreen = options.exitFullscreen ?? true;
+    zenFullscreenActiveRef.current = false;
+    setZenModeState(false);
+    if (options.returnFocus) {
+      readingPreferencesTriggerRef.current?.focus();
+    }
+    if (exitFullscreen && document.fullscreenElement && document.exitFullscreen) {
+      try {
+        await document.exitFullscreen();
+      } catch {
+        // 浏览器可能已经在处理退出全屏；页面内禅模式已经退出。
+      }
+    }
+  }
+
+  function renderPlaybackIssues() {
+    return (
+      <>
+        {playbackError ? (
+          <span className="player-error" role="alert">
+            {playbackError}
+            <button className="inline-action" type="button" onClick={handlePlayPause}>
+              重试
+            </button>
+          </span>
+        ) : null}
+        {progressError ? (
+          <span className="player-error" role="alert">
+            {progressError}
+            <button className="inline-action" type="button" onClick={retryProgressSave}>
+              重试
+            </button>
+          </span>
+        ) : null}
+        {playbackModeError ? (
+          <span className="player-error" role="alert">
+            {playbackModeError}
+          </span>
+        ) : null}
+      </>
+    );
+  }
+
   const playbackLabel =
     playbackStatus === "loading"
       ? "正在准备音频"
@@ -1265,44 +1428,67 @@ export function ReaderPage({
             : "准备朗读";
 
   return (
-    <main className="reader-shell">
-      <nav
-        ref={readerNavRef}
-        className={`reader-nav ${showReaderContext ? "reader-nav-with-context" : ""}`}
-        aria-label="阅读页导航"
-      >
-        <Link className="text-link" to="/">
-          <ArrowLeft aria-hidden="true" />
-          返回书架
-        </Link>
-        {material ? (
-          <div
-            className={`reader-nav-context ${
-              showReaderContext ? "reader-nav-context-visible" : ""
-            }`}
-            aria-hidden={!showReaderContext}
-          >
-            <span className="reader-nav-title">{readingTitle}</span>
-            {readerContextProgress ? (
-              <span className="reader-nav-progress">{readerContextProgress}</span>
+    <main className={zenMode ? "reader-shell reader-shell-zen" : "reader-shell"}>
+      {zenMode ? (
+        <button
+          className="icon-button zen-exit-button"
+          type="button"
+          aria-label="退出禅模式"
+          title="退出禅模式"
+          onClick={() => void exitZenMode()}
+        >
+          <Minimize2 aria-hidden="true" />
+        </button>
+      ) : (
+        <nav
+          ref={readerNavRef}
+          className={`reader-nav ${showReaderContext ? "reader-nav-with-context" : ""}`}
+          aria-label="阅读页导航"
+        >
+          <Link className="text-link" to="/">
+            <ArrowLeft aria-hidden="true" />
+            返回书架
+          </Link>
+          {material ? (
+            <div
+              className={`reader-nav-context ${
+                showReaderContext ? "reader-nav-context-visible" : ""
+              }`}
+              aria-hidden={!showReaderContext}
+            >
+              <span className="reader-nav-title">{readingTitle}</span>
+              {readerContextProgress ? (
+                <span className="reader-nav-progress">{readerContextProgress}</span>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="reader-nav-actions" ref={readingPreferencesRef}>
+            <span className="reader-brand">Read Along</span>
+            {material ? (
+              <button
+                className="icon-button reader-settings-trigger"
+                type="button"
+                aria-label="进入禅模式"
+                aria-keyshortcuts="Z"
+                title="禅模式 (Z)"
+                onClick={() => void enterZenMode()}
+              >
+                <Maximize2 aria-hidden="true" />
+              </button>
             ) : null}
-          </div>
-        ) : null}
-        <div className="reader-nav-actions" ref={readingPreferencesRef}>
-          <span className="reader-brand">Read Along</span>
-          <button
-            ref={readingPreferencesTriggerRef}
-            className="icon-button reader-settings-trigger"
-            type="button"
-            aria-expanded={showReadingPreferences}
-            aria-controls="reading-preferences-panel"
-            aria-label="阅读设置"
-            title="阅读设置"
-            onClick={() => setShowReadingPreferences((current) => !current)}
-          >
-            <Settings2 aria-hidden="true" />
-          </button>
-          {showReadingPreferences ? (
+            <button
+              ref={readingPreferencesTriggerRef}
+              className="icon-button reader-settings-trigger"
+              type="button"
+              aria-expanded={showReadingPreferences}
+              aria-controls="reading-preferences-panel"
+              aria-label="阅读设置"
+              title="阅读设置"
+              onClick={() => setShowReadingPreferences((current) => !current)}
+            >
+              <Settings2 aria-hidden="true" />
+            </button>
+            {showReadingPreferences ? (
             <div
               id="reading-preferences-panel"
               className="reading-preferences-panel"
@@ -1391,9 +1577,10 @@ export function ReaderPage({
                 </p>
               ) : null}
             </div>
-          ) : null}
-        </div>
-      </nav>
+            ) : null}
+          </div>
+        </nav>
+      )}
 
       {error ? (
         <section className="state-panel reader-state" role="alert">
@@ -1460,7 +1647,22 @@ export function ReaderPage({
         </article>
       ) : null}
 
-      {!error && material && sentences.length > 0 ? (
+      {zenMode && !error && material && sentences.length > 0 ? (
+        <section ref={playerBarRef} className="zen-status-bar" aria-label="禅模式朗读状态">
+          <div className="zen-status-content" aria-live="polite">
+            <strong>{playbackLabel}</strong>
+            <span>{timelinePositionLabel || timelineTotalLabel}</span>
+            {zenFullscreenNotice ? (
+              <span className="zen-status-notice" role="status">
+                浏览器未进入全屏，已保留禅模式
+              </span>
+            ) : null}
+            {renderPlaybackIssues()}
+          </div>
+        </section>
+      ) : null}
+
+      {!zenMode && !error && material && sentences.length > 0 ? (
         <section ref={playerBarRef} className="player-bar" aria-label="朗读控制">
           <div className="player-position" aria-live="polite">
             <strong>{playbackLabel}</strong>
@@ -1483,27 +1685,7 @@ export function ReaderPage({
                 </button>
               </span>
             ) : null}
-            {playbackError ? (
-              <span className="player-error" role="alert">
-                {playbackError}
-                <button className="inline-action" type="button" onClick={handlePlayPause}>
-                  重试
-                </button>
-              </span>
-            ) : null}
-            {progressError ? (
-              <span className="player-error" role="alert">
-                {progressError}
-                <button className="inline-action" type="button" onClick={retryProgressSave}>
-                  重试
-                </button>
-              </span>
-            ) : null}
-            {playbackModeError ? (
-              <span className="player-error" role="alert">
-                {playbackModeError}
-              </span>
-            ) : null}
+            {renderPlaybackIssues()}
           </div>
           <div className="player-controls">
             <div ref={playbackModeMenuRef} className="player-setting playback-mode">
