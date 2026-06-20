@@ -36,6 +36,7 @@ from read_along.models import (
     Sentence,
     SourceType,
 )
+from read_along.playback_position import playback_time_position as derive_playback_time_position
 from read_along.repository import Repository
 from read_along.storage import StoragePaths
 from read_along.tts import MacOSSayTTS, TTSGenerationError, tts_input_fingerprint
@@ -143,10 +144,6 @@ def _wav_duration_seconds(path: Path) -> float:
     if frame_rate <= 0 or frame_count < 0:
         raise AudioGenerationError('无法读取句子音频时长。')
     return frame_count / frame_rate
-
-
-def _estimated_sentence_duration(sentence: Sentence, seconds_per_character: float) -> float:
-    return max(1.0, min(60.0, len(sentence.text.strip()) * seconds_per_character))
 
 
 def _normalized_url(url: str) -> str:
@@ -736,39 +733,9 @@ class MaterialLibrary:
         progress = self.repository.get_progress(connection, material_id)
         if progress is None:
             return None
-        sentences = self.repository.list_sentences(connection, material_id)
-        if not sentences:
-            return None
-        known = [
-            (sentence.audio_duration_seconds, len(sentence.text.strip()))
-            for sentence in sentences
-            if sentence.audio_duration_seconds is not None and len(sentence.text.strip()) > 0
-        ]
-        if known:
-            seconds_per_character = sum(duration for duration, _ in known) / sum(length for _, length in known)
-        else:
-            seconds_per_character = 0.35
-        durations = [
-            sentence.audio_duration_seconds
-            if sentence.audio_duration_seconds is not None
-            else _estimated_sentence_duration(sentence, seconds_per_character)
-            for sentence in sentences
-        ]
-        current_index = next(
-            (index for index, sentence in enumerate(sentences) if sentence.id == progress.sentence_id),
-            None,
-        )
-        if current_index is None:
-            return None
-        total = sum(durations)
-        if progress.playback_completed:
-            elapsed = total
-        else:
-            elapsed = sum(durations[:current_index]) + min(progress.sentence_offset_seconds, durations[current_index])
-        return PlaybackTimePosition(
-            elapsed_seconds=elapsed,
-            total_seconds=total,
-            estimated=any(sentence.audio_duration_seconds is None for sentence in sentences),
+        return derive_playback_time_position(
+            self.repository.list_sentences(connection, material_id),
+            progress,
         )
 
     def _navigation(
