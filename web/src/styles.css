@@ -1304,7 +1304,7 @@ select:disabled {
 }
 
 .player-icon-button,
-.playback-rate-button {
+.player-setting-button {
   border-color: var(--color-border);
   background: var(--color-surface);
 }
@@ -1324,7 +1324,7 @@ select:disabled {
   height: 1.35rem;
 }
 
-.playback-rate {
+.player-setting {
   position: relative;
   display: grid;
   gap: 3px;
@@ -1333,7 +1333,7 @@ select:disabled {
   font-weight: 700;
 }
 
-.playback-rate-button {
+.player-setting-button {
   display: inline-flex;
   min-width: 96px;
   min-height: 44px;
@@ -1349,12 +1349,16 @@ select:disabled {
   cursor: pointer;
 }
 
-.playback-rate-button svg {
+.playback-mode-button {
+  min-width: 134px;
+}
+
+.player-setting-button svg {
   width: 1rem;
   height: 1rem;
 }
 
-.playback-rate-menu {
+.player-setting-menu {
   position: absolute;
   z-index: 12;
   right: 0;
@@ -1368,7 +1372,11 @@ select:disabled {
   box-shadow: var(--shadow-dock);
 }
 
-.playback-rate-menu button {
+.playback-mode-menu {
+  min-width: 144px;
+}
+
+.player-setting-menu button {
   display: grid;
   min-height: 36px;
   grid-template-columns: minmax(0, 1fr) 18px;
@@ -1385,18 +1393,18 @@ select:disabled {
   cursor: pointer;
 }
 
-.playback-rate-menu button:hover,
-.playback-rate-menu button:focus-visible {
+.player-setting-menu button:hover,
+.player-setting-menu button:focus-visible {
   color: var(--color-text);
   background: var(--color-surface-subtle);
 }
 
-.playback-rate-menu button[aria-selected="true"] {
+.player-setting-menu button[aria-selected="true"] {
   color: var(--color-accent);
   background: var(--color-accent-soft);
 }
 
-.playback-rate-menu svg {
+.player-setting-menu svg {
   width: 0.95rem;
   height: 0.95rem;
 }
@@ -1454,7 +1462,7 @@ select:disabled {
 
   .reader-shell {
     width: min(100% - 28px, 920px);
-    padding-bottom: 244px;
+    padding-bottom: 292px;
   }
 
   .app-header {
@@ -1573,8 +1581,18 @@ select:disabled {
   .playback-rate {
     display: grid;
     grid-column: 1 / -1;
-    grid-row: 1;
+    grid-row: 2;
     grid-template-columns: max-content minmax(92px, 130px);
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .playback-mode {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-row: 1;
+    grid-template-columns: max-content minmax(128px, 168px);
     justify-content: center;
     align-items: center;
     gap: 6px;
@@ -1582,13 +1600,13 @@ select:disabled {
 
   .player-timeline {
     grid-column: 1 / -1;
-    grid-row: 2;
+    grid-row: 3;
     width: 100%;
     min-width: 0;
     grid-template-columns: max-content minmax(0, 1fr) max-content;
   }
 
-  .playback-rate-button {
+  .player-setting-button {
     width: 100%;
     min-width: 0;
   }

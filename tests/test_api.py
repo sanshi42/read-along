@@ -90,7 +90,24 @@ def test_material_detail_returns_saved_material(tmp_path: Path) -> None:
     assert response.json()['id'] == material.material.id
     assert response.json()['playback_position'] is None
     assert response.json()['playback_time_position'] is None
-    assert response.json()['navigation'] == {'previous': None, 'next': None}
+    assert response.json()['navigation'] == {
+        'first': {
+            'content_hash': material.material.content_hash,
+            'created_at': material.material.created_at.isoformat().replace('+00:00', 'Z'),
+            'id': material.material.id,
+            'title': material.material.title,
+            'updated_at': material.material.updated_at.isoformat().replace('+00:00', 'Z'),
+        },
+        'previous': None,
+        'next': None,
+        'last': {
+            'content_hash': material.material.content_hash,
+            'created_at': material.material.created_at.isoformat().replace('+00:00', 'Z'),
+            'id': material.material.id,
+            'title': material.material.title,
+            'updated_at': material.material.updated_at.isoformat().replace('+00:00', 'Z'),
+        },
+    }
     assert response.json()['paragraphs'][0]['sentences'][0]['text'] == '第一句。'
     assert response.json()['paragraphs'][0]['sentences'][0]['audio_duration_seconds'] is None
     assert 'audio_path' not in response.json()['paragraphs'][0]['sentences'][0]

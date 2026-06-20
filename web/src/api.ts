@@ -51,8 +51,10 @@ export interface MaterialSummary {
 export interface MaterialDetail extends MaterialSummary {
   sources: MaterialSource[];
   navigation: {
+    first: MaterialNavigationItem | null;
     previous: MaterialNavigationItem | null;
     next: MaterialNavigationItem | null;
+    last: MaterialNavigationItem | null;
   };
   paragraphs: Array<{
     id: string;

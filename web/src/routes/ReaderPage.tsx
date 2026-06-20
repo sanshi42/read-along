@@ -10,6 +10,8 @@ import {
   LoaderCircle,
   Pause,
   Play,
+  Repeat,
+  Repeat1,
   Rewind,
   RotateCcw,
   Settings2,
@@ -25,8 +27,13 @@ import {
   saveProgress,
   sentenceAudioUrl,
   type MaterialDetail,
+  type MaterialNavigationItem,
   type ReadingProgress,
 } from "../api";
+import {
+  loadPlaybackModePreference,
+  savePlaybackModePreference,
+} from "../playbackModePreference";
 import {
   type FontSizePreference,
   type LineHeightPreference,
@@ -49,6 +56,15 @@ import {
   seekTimeline,
 } from "./readerPlaybackTimeline";
 import {
+  playbackModeLabel,
+  playbackModeTargetForNaturalEnd,
+  playbackModeTargetForNext,
+  playbackModeTargetForPrevious,
+  type PlaybackMode,
+  type PlaybackModeNavigation,
+  type PlaybackModeTarget,
+} from "./playbackMode";
+import {
   isRectFullyVisibleWithinReaderChrome,
   normalizeReadingTitle,
   sentencePointerAction,
@@ -64,6 +80,7 @@ type ProgressInput = Pick<
 >;
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2] as const;
+const PLAYBACK_MODES: PlaybackMode[] = ["repeat_one", "sequential", "repeat_list"];
 const SCROLL_KEYS = new Set(["ArrowDown", "ArrowUp", "End", "Home", "PageDown", "PageUp"]);
 const READER_CHROME_MARGIN = 18;
 const SKIP_BACK_SECONDS = 15;
@@ -94,6 +111,50 @@ function sourceDetailLabel(material: MaterialDetail, readingTitle: string) {
   return sourceUri;
 }
 
+function materialPlaybackNavigation(material: MaterialDetail): PlaybackModeNavigation {
+  return {
+    currentId: material.id,
+    previousId: material.navigation.previous?.id ?? null,
+    nextId: material.navigation.next?.id ?? null,
+    firstId: material.navigation.first?.id ?? null,
+    lastId: material.navigation.last?.id ?? null,
+  };
+}
+
+function navigationItemForMaterial(
+  material: MaterialDetail,
+  targetMaterialId: string,
+): MaterialNavigationItem | null {
+  return (
+    [
+      material.navigation.first,
+      material.navigation.previous,
+      material.navigation.next,
+      material.navigation.last,
+    ].find((item) => item?.id === targetMaterialId) ?? null
+  );
+}
+
+function navigableMaterialTarget(
+  target: PlaybackModeTarget | null,
+  currentMaterialId: string,
+): PlaybackModeTarget | null {
+  if (!target || target.materialId === currentMaterialId) {
+    return null;
+  }
+  return target;
+}
+
+function PlaybackModeIcon({ mode }: { mode: PlaybackMode }) {
+  if (mode === "repeat_one") {
+    return <Repeat1 aria-hidden="true" />;
+  }
+  if (mode === "repeat_list") {
+    return <Repeat aria-hidden="true" />;
+  }
+  return <ChevronRight aria-hidden="true" />;
+}
+
 export function ReaderPage({
   readingPreferences,
   readingPreferencesError,
@@ -113,6 +174,11 @@ export function ReaderPage({
   const [showReturnToCurrent, setShowReturnToCurrent] = useState(false);
   const [showReadingPreferences, setShowReadingPreferences] = useState(false);
   const [showPlaybackRateMenu, setShowPlaybackRateMenu] = useState(false);
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(() =>
+    loadPlaybackModePreference(),
+  );
+  const [showPlaybackModeMenu, setShowPlaybackModeMenu] = useState(false);
+  const [playbackModeError, setPlaybackModeError] = useState<string | null>(null);
   const [showReaderContext, setShowReaderContext] = useState(false);
   const [pendingSeekSeconds, setPendingSeekSeconds] = useState<number | null>(null);
   const [audioRepairStatus, setAudioRepairStatus] = useState<AudioRepairStatus>("idle");
@@ -120,6 +186,7 @@ export function ReaderPage({
   const currentSentenceIdRef = useRef<string | null>(null);
   const currentSentenceOffsetSecondsRef = useRef(0);
   const playbackRateRef = useRef(1);
+  const playbackModeRef = useRef<PlaybackMode>(playbackMode);
   const playbackCompletedRef = useRef(false);
   const playbackStatusRef = useRef<PlaybackStatus>("idle");
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -143,6 +210,8 @@ export function ReaderPage({
   const readingPreferencesTriggerRef = useRef<HTMLButtonElement | null>(null);
   const playbackRateMenuRef = useRef<HTMLDivElement | null>(null);
   const playbackRateTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const playbackModeMenuRef = useRef<HTMLDivElement | null>(null);
+  const playbackModeTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const sentences = useMemo(
     () => material?.paragraphs.flatMap((paragraph) => paragraph.sentences) ?? [],
@@ -186,6 +255,25 @@ export function ReaderPage({
   const readerContextProgress =
     timelinePositionLabel ||
     (playbackTimeline.totalSeconds > 0 ? timelineTotalLabel : sentences.length > 0 ? `共 ${sentences.length} 句` : "");
+  const playbackNavigation = material ? materialPlaybackNavigation(material) : null;
+  const previousPlaybackTarget =
+    material && playbackNavigation
+      ? navigableMaterialTarget(
+          playbackModeTargetForPrevious(playbackMode, playbackNavigation),
+          material.id,
+        )
+      : null;
+  const nextPlaybackTarget =
+    material && playbackNavigation
+      ? navigableMaterialTarget(
+          playbackModeTargetForNext(playbackMode, playbackNavigation),
+          material.id,
+        )
+      : null;
+  const completedPromptItem =
+    material && playbackCompleted && nextPlaybackTarget
+      ? navigationItemForMaterial(material, nextPlaybackTarget.materialId)
+      : null;
 
   useEffect(() => {
     discardPlayback();
@@ -322,6 +410,10 @@ export function ReaderPage({
   }, [material, currentSentenceIndex]);
 
   useEffect(() => {
+    playbackModeRef.current = playbackMode;
+  }, [playbackMode]);
+
+  useEffect(() => {
     if (!material || !autoplayOnMaterialLoadRef.current) {
       return;
     }
@@ -387,6 +479,32 @@ export function ReaderPage({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [showPlaybackRateMenu]);
+
+  useEffect(() => {
+    if (!showPlaybackModeMenu) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (playbackModeMenuRef.current && !playbackModeMenuRef.current.contains(event.target as Node)) {
+        setShowPlaybackModeMenu(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setShowPlaybackModeMenu(false);
+        playbackModeTriggerRef.current?.focus();
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showPlaybackModeMenu]);
 
   useEffect(() => {
     function handleGlobalShortcut(event: KeyboardEvent) {
@@ -866,6 +984,25 @@ export function ReaderPage({
     const currentItem = playbackTimeline.items.find((item) => item.sentenceId === sentenceId);
     updateCurrentPosition(sentenceId, currentItem?.durationSeconds ?? 0, true);
     updatePlaybackStatus("paused");
+    if (!material) {
+      return;
+    }
+    const target = playbackModeTargetForNaturalEnd(
+      playbackModeRef.current,
+      materialPlaybackNavigation(material),
+    );
+    if (!target) {
+      return;
+    }
+    if (target.materialId === material.id) {
+      const firstSentenceId = sentences[0]?.id;
+      if (firstSentenceId) {
+        followCurrentRef.current = true;
+        void playSentence(firstSentenceId, false, 0);
+      }
+      return;
+    }
+    navigateToMaterial(target.materialId, { autoplay: target.autoplay });
   }
 
   function handlePlayPause() {
@@ -966,9 +1103,17 @@ export function ReaderPage({
     commitTimelineSeek(Number(event.currentTarget.value));
   }
 
-  function navigateToMaterial(targetMaterialId: string) {
+  function navigateToMaterial(
+    targetMaterialId: string,
+    options: { autoplay?: boolean } = {},
+  ) {
+    if (!targetMaterialId || targetMaterialId === materialId) {
+      return;
+    }
     queueCurrentProgress();
-    autoplayOnMaterialLoadRef.current = playbackStatusRef.current === "playing" || playbackStatusRef.current === "loading";
+    autoplayOnMaterialLoadRef.current =
+      options.autoplay ??
+      (playbackStatusRef.current === "playing" || playbackStatusRef.current === "loading");
     navigate(`/materials/${targetMaterialId}`);
   }
 
@@ -992,6 +1137,7 @@ export function ReaderPage({
   }
 
   function handlePlaybackRateMenuToggle() {
+    setShowPlaybackModeMenu(false);
     setShowPlaybackRateMenu((current) => !current);
   }
 
@@ -999,6 +1145,21 @@ export function ReaderPage({
     handlePlaybackRateChange(rate);
     setShowPlaybackRateMenu(false);
     playbackRateTriggerRef.current?.focus();
+  }
+
+  function handlePlaybackModeMenuToggle() {
+    setShowPlaybackRateMenu(false);
+    setShowPlaybackModeMenu((current) => !current);
+  }
+
+  function selectPlaybackMode(mode: PlaybackMode) {
+    playbackModeRef.current = mode;
+    setPlaybackMode(mode);
+    setPlaybackModeError(
+      savePlaybackModePreference(mode) ? null : "播放模式已切换，但无法保存到浏览器。",
+    );
+    setShowPlaybackModeMenu(false);
+    playbackModeTriggerRef.current?.focus();
   }
 
   function sentenceElement() {
@@ -1305,13 +1466,19 @@ export function ReaderPage({
           <div className="player-position" aria-live="polite">
             <strong>{playbackLabel}</strong>
             <span>{timelinePositionLabel || timelineTotalLabel}</span>
-            {playbackCompleted && material.navigation.next ? (
+            {completedPromptItem ? (
               <span className="player-next-prompt">
-                下一篇：{normalizeReadingTitle(material.navigation.next.title)}
+                继续：{normalizeReadingTitle(completedPromptItem.title)}
                 <button
                   className="inline-action"
                   type="button"
-                  onClick={() => navigateToMaterial(material.navigation.next?.id ?? "")}
+                  onClick={() => {
+                    if (nextPlaybackTarget) {
+                      navigateToMaterial(nextPlaybackTarget.materialId, {
+                        autoplay: nextPlaybackTarget.autoplay,
+                      });
+                    }
+                  }}
                 >
                   继续
                 </button>
@@ -1333,13 +1500,54 @@ export function ReaderPage({
                 </button>
               </span>
             ) : null}
+            {playbackModeError ? (
+              <span className="player-error" role="alert">
+                {playbackModeError}
+              </span>
+            ) : null}
           </div>
           <div className="player-controls">
-            <div ref={playbackRateMenuRef} className="playback-rate">
+            <div ref={playbackModeMenuRef} className="player-setting playback-mode">
+              <span id="playback-mode-label">模式</span>
+              <button
+                ref={playbackModeTriggerRef}
+                className="player-setting-button playback-mode-button"
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={showPlaybackModeMenu}
+                aria-labelledby="playback-mode-label playback-mode-value"
+                title="播放模式"
+                onClick={handlePlaybackModeMenuToggle}
+              >
+                <PlaybackModeIcon mode={playbackMode} />
+                <span id="playback-mode-value">{playbackModeLabel(playbackMode)}</span>
+                <ChevronDown
+                  aria-hidden="true"
+                  className={showPlaybackModeMenu ? "chevron chevron-open" : "chevron"}
+                />
+              </button>
+              {showPlaybackModeMenu ? (
+                <div className="player-setting-menu playback-mode-menu" role="listbox" aria-label="播放模式">
+                  {PLAYBACK_MODES.map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      role="option"
+                      aria-selected={mode === playbackMode}
+                      onClick={() => selectPlaybackMode(mode)}
+                    >
+                      <span>{playbackModeLabel(mode)}</span>
+                      {mode === playbackMode ? <Check aria-hidden="true" /> : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <div ref={playbackRateMenuRef} className="player-setting playback-rate">
               <span id="playback-rate-label">倍速</span>
               <button
                 ref={playbackRateTriggerRef}
-                className="playback-rate-button"
+                className="player-setting-button playback-rate-button"
                 type="button"
                 aria-haspopup="listbox"
                 aria-expanded={showPlaybackRateMenu}
@@ -1354,7 +1562,7 @@ export function ReaderPage({
                 />
               </button>
               {showPlaybackRateMenu ? (
-                <div className="playback-rate-menu" role="listbox" aria-label="播放倍速">
+                <div className="player-setting-menu playback-rate-menu" role="listbox" aria-label="播放倍速">
                   {PLAYBACK_RATES.map((rate) => (
                     <button
                       key={rate}
@@ -1396,12 +1604,14 @@ export function ReaderPage({
             <button
               className="icon-button player-icon-button"
               type="button"
-              disabled={!material.navigation.previous}
+              disabled={!previousPlaybackTarget}
               aria-label="上一篇"
               title="上一篇"
               onClick={() => {
-                if (material.navigation.previous) {
-                  navigateToMaterial(material.navigation.previous.id);
+                if (previousPlaybackTarget) {
+                  navigateToMaterial(previousPlaybackTarget.materialId, {
+                    autoplay: previousPlaybackTarget.autoplay,
+                  });
                 }
               }}
             >
@@ -1462,12 +1672,14 @@ export function ReaderPage({
             <button
               className="icon-button player-icon-button"
               type="button"
-              disabled={!material.navigation.next}
+              disabled={!nextPlaybackTarget}
               aria-label="下一篇"
               title="下一篇"
               onClick={() => {
-                if (material.navigation.next) {
-                  navigateToMaterial(material.navigation.next.id);
+                if (nextPlaybackTarget) {
+                  navigateToMaterial(nextPlaybackTarget.materialId, {
+                    autoplay: nextPlaybackTarget.autoplay,
+                  });
                 }
               }}
             >

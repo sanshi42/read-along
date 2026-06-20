@@ -159,7 +159,7 @@ def test_material_detail_expresses_sentences_nested_by_paragraph() -> None:
             'progress': None,
             'playback_position': None,
             'playback_time_position': None,
-            'navigation': {'previous': None, 'next': None},
+            'navigation': {'first': None, 'previous': None, 'next': None, 'last': None},
             'paragraphs': [
                 ParagraphDetail(
                     id='paragraph-1',
@@ -186,7 +186,7 @@ def test_material_import_result_expresses_outcome_and_material() -> None:
             'progress': None,
             'playback_position': None,
             'playback_time_position': None,
-            'navigation': {'previous': None, 'next': None},
+            'navigation': {'first': None, 'previous': None, 'next': None, 'last': None},
             'paragraphs': [],
         }
     )
@@ -216,12 +216,22 @@ def test_api_material_responses_exclude_internal_audio_path() -> None:
                 'estimated': True,
             },
             'navigation': {
+                'first': {
+                    **material_data(),
+                    'id': 'mat-0',
+                    'title': '上一篇',
+                },
                 'previous': {
                     **material_data(),
                     'id': 'mat-0',
                     'title': '上一篇',
                 },
                 'next': None,
+                'last': {
+                    **material_data(),
+                    'id': 'mat-1',
+                    'title': '当前篇',
+                },
             },
             'paragraphs': [
                 {
