@@ -293,6 +293,48 @@ def test_detail_reports_stable_material_navigation_by_creation_order(tmp_path: P
     assert detail.navigation.next is not None
     assert detail.navigation.next.id == third.material.id
     assert detail.navigation.next.title == '第三篇'
+    assert detail.navigation.first is not None
+    assert detail.navigation.first.id == first.material.id
+    assert detail.navigation.last is not None
+    assert detail.navigation.last.id == third.material.id
+
+
+def test_detail_navigation_reports_first_and_last_for_list_edges(tmp_path: Path) -> None:
+    library, _ = material_library(tmp_path)
+    first = library.save(url_draft(url='https://example.com/first', title='第一篇', sentences=('甲。',)))
+    second = library.save(url_draft(url='https://example.com/second', title='第二篇', sentences=('乙。',)))
+
+    first_detail = library.get(first.material.id)
+    second_detail = library.get(second.material.id)
+
+    assert first_detail.navigation.previous is None
+    assert first_detail.navigation.next is not None
+    assert first_detail.navigation.next.id == second.material.id
+    assert first_detail.navigation.first is not None
+    assert first_detail.navigation.first.id == first.material.id
+    assert first_detail.navigation.last is not None
+    assert first_detail.navigation.last.id == second.material.id
+    assert second_detail.navigation.previous is not None
+    assert second_detail.navigation.previous.id == first.material.id
+    assert second_detail.navigation.next is None
+    assert second_detail.navigation.first is not None
+    assert second_detail.navigation.first.id == first.material.id
+    assert second_detail.navigation.last is not None
+    assert second_detail.navigation.last.id == second.material.id
+
+
+def test_detail_navigation_reports_single_material_as_first_and_last(tmp_path: Path) -> None:
+    library, _ = material_library(tmp_path)
+    saved = library.save(url_draft(url='https://example.com/only', title='唯一篇', sentences=('甲。',)))
+
+    detail = library.get(saved.material.id)
+
+    assert detail.navigation.previous is None
+    assert detail.navigation.next is None
+    assert detail.navigation.first is not None
+    assert detail.navigation.first.id == saved.material.id
+    assert detail.navigation.last is not None
+    assert detail.navigation.last.id == saved.material.id
 
 
 def test_playback_time_position_uses_real_durations_when_available(

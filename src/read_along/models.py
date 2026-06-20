@@ -152,8 +152,10 @@ class MaterialNavigationItem(Material):
 class MaterialNavigation(DataModel):
     """阅读页相邻材料导航。"""
 
+    first: MaterialNavigationItem | None
     previous: MaterialNavigationItem | None
     next: MaterialNavigationItem | None
+    last: MaterialNavigationItem | None
 
 
 class ParagraphDetail(Paragraph):

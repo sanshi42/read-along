@@ -779,14 +779,18 @@ class MaterialLibrary:
         materials = self.repository.list_materials_by_creation(connection)
         current_index = next((index for index, material in enumerate(materials) if material.id == material_id), None)
         if current_index is None:
-            return MaterialNavigation(previous=None, next=None)
+            return MaterialNavigation(first=None, previous=None, next=None, last=None)
+        first_material = materials[0] if materials else None
+        last_material = materials[-1] if materials else None
         previous_material = materials[current_index - 1] if current_index > 0 else None
         next_material = materials[current_index + 1] if current_index < len(materials) - 1 else None
         return MaterialNavigation(
+            first=MaterialNavigationItem.model_validate(first_material.model_dump()) if first_material else None,
             previous=(
                 MaterialNavigationItem.model_validate(previous_material.model_dump()) if previous_material else None
             ),
             next=MaterialNavigationItem.model_validate(next_material.model_dump()) if next_material else None,
+            last=MaterialNavigationItem.model_validate(last_material.model_dump()) if last_material else None,
         )
 
     def _cleanup_failed_save(
