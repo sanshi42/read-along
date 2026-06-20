@@ -1,4 +1,5 @@
 import type { ReadingProgress } from "../api";
+import { resumeSentenceIdForProgress } from "./readerPlaybackTimeline.ts";
 
 export type AudioPreparationStatus = "idle" | "loading" | "ready" | "failed";
 
@@ -35,13 +36,7 @@ export function initialAudioPreloadAnchor(
   sentenceIds: string[],
   progress: Pick<ReadingProgress, "sentence_id" | "playback_completed"> | null,
 ): string | null {
-  if (sentenceIds.length === 0) {
-    return null;
-  }
-  if (!progress || progress.playback_completed) {
-    return sentenceIds[0];
-  }
-  return sentenceIds.includes(progress.sentence_id) ? progress.sentence_id : sentenceIds[0];
+  return resumeSentenceIdForProgress(sentenceIds, progress);
 }
 
 export function audioPreloadWindow(

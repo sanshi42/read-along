@@ -53,6 +53,7 @@ import {
   formatTimelineTime,
   isInteractiveShortcutTarget,
   progressInputForTimeline,
+  resumeSentenceIdForProgress,
   seekTimeline,
 } from "./readerPlaybackTimeline";
 import {
@@ -332,14 +333,12 @@ export function ReaderPage({
         const progress = item.progress;
         const loadedSentences = item.paragraphs.flatMap((paragraph) => paragraph.sentences);
         const loadedSentenceIds = loadedSentences.map((sentence) => sentence.id);
-        const sentenceExists =
-          progress !== null &&
-          loadedSentences.some((sentence) => sentence.id === progress.sentence_id);
-        if (progress && sentenceExists) {
-          const initialSentenceId = progress.playback_completed
-            ? (loadedSentences[0]?.id ?? progress.sentence_id)
-            : progress.sentence_id;
-          const initialOffset = progress.playback_completed ? 0 : progress.sentence_offset_seconds;
+        const initialSentenceId = resumeSentenceIdForProgress(loadedSentenceIds, progress);
+        if (progress && initialSentenceId) {
+          const initialOffset =
+            progress.playback_completed || initialSentenceId !== progress.sentence_id
+              ? 0
+              : progress.sentence_offset_seconds;
           currentSentenceIdRef.current = initialSentenceId;
           currentSentenceOffsetSecondsRef.current = initialOffset;
           playbackRateRef.current = progress.playback_rate;
@@ -352,7 +351,7 @@ export function ReaderPage({
           scheduleScrollToCurrent("auto");
         }
         scheduleAudioPreload(
-          initialAudioPreloadAnchor(loadedSentenceIds, sentenceExists ? progress : null),
+          initialAudioPreloadAnchor(loadedSentenceIds, progress),
           loadedSentenceIds,
         );
       })

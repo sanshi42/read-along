@@ -10,6 +10,8 @@ export interface TimelineProgress {
   playback_completed: boolean;
 }
 
+export type PlaybackProgressAnchor = Pick<TimelineProgress, "sentence_id" | "playback_completed">;
+
 export interface PlaybackTimelineItem {
   sentenceId: string;
   startSeconds: number;
@@ -75,7 +77,11 @@ export function buildPlaybackTimeline(
     };
   }
 
-  if (!progress || progress.playback_completed) {
+  const resumeSentenceId = resumeSentenceIdForProgress(
+    items.map((item) => item.sentenceId),
+    progress,
+  );
+  if (!progress || progress.playback_completed || !resumeSentenceId) {
     return {
       items,
       currentSentenceId: items[0].sentenceId,
@@ -86,7 +92,7 @@ export function buildPlaybackTimeline(
     };
   }
 
-  const currentItem = items.find((item) => item.sentenceId === progress.sentence_id) ?? items[0];
+  const currentItem = items.find((item) => item.sentenceId === resumeSentenceId) ?? items[0];
   const currentOffsetSeconds = clamp(progress.sentence_offset_seconds, 0, currentItem.durationSeconds);
   return {
     items,
@@ -96,6 +102,19 @@ export function buildPlaybackTimeline(
     totalSeconds,
     estimated: items.some((item) => item.estimated),
   };
+}
+
+export function resumeSentenceIdForProgress(
+  sentenceIds: string[],
+  progress: PlaybackProgressAnchor | null,
+): string | null {
+  if (sentenceIds.length === 0) {
+    return null;
+  }
+  if (!progress || progress.playback_completed) {
+    return sentenceIds[0];
+  }
+  return sentenceIds.includes(progress.sentence_id) ? progress.sentence_id : sentenceIds[0];
 }
 
 export function seekTimeline(timeline: PlaybackTimeline, targetSeconds: number): TimelineSeekResult | null {

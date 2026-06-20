@@ -6,6 +6,7 @@ import {
   formatTimelineTime,
   isInteractiveShortcutTarget,
   progressInputForTimeline,
+  resumeSentenceIdForProgress,
   seekTimeline,
 } from "../src/routes/readerPlaybackTimeline.ts";
 
@@ -40,6 +41,36 @@ test("buildPlaybackTimeline maps completed progress to the start for resuming", 
   assert.equal(timeline.currentSentenceId, "s1");
   assert.equal(timeline.currentOffsetSeconds, 0);
   assert.equal(timeline.elapsedSeconds, 0);
+});
+
+test("resumeSentenceIdForProgress centralizes completed and missing progress fallback", () => {
+  const sentenceIds = sentences.map((sentence) => sentence.id);
+
+  assert.equal(resumeSentenceIdForProgress(sentenceIds, null), "s1");
+  assert.equal(
+    resumeSentenceIdForProgress(sentenceIds, {
+      sentence_id: "s2",
+      sentence_offset_seconds: 2,
+      playback_completed: false,
+    }),
+    "s2",
+  );
+  assert.equal(
+    resumeSentenceIdForProgress(sentenceIds, {
+      sentence_id: "s3",
+      sentence_offset_seconds: 6,
+      playback_completed: true,
+    }),
+    "s1",
+  );
+  assert.equal(
+    resumeSentenceIdForProgress(sentenceIds, {
+      sentence_id: "missing",
+      sentence_offset_seconds: 0,
+      playback_completed: false,
+    }),
+    "s1",
+  );
 });
 
 test("seekTimeline clamps at material boundaries and marks completion at the end", () => {
