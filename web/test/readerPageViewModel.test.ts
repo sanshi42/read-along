@@ -4,6 +4,9 @@ import test from "node:test";
 import {
   isRectFullyVisibleWithinReaderChrome,
   normalizeReadingTitle,
+  readerChromeBoundsForFixedControls,
+  readerContextProgressLabel,
+  readerSentenceInteraction,
   sentencePointerAction,
   scrollTargetForRectWithinReaderChrome,
   shouldShowReaderNavContext,
@@ -23,6 +26,27 @@ test("shouldShowReaderNavContext appears after the material header leaves the na
   assert.equal(shouldShowReaderNavContext({ headerBottom: 68, navBottom: 68 }), true);
 });
 
+test("readerContextProgressLabel leads with sentence position when available", () => {
+  assert.equal(
+    readerContextProgressLabel({
+      sentenceIndex: 4,
+      sentenceCount: 12,
+      timelinePositionLabel: "01:20 / 08:00",
+      timelineTotalLabel: "08:00",
+    }),
+    "第 5 / 12 句 · 01:20 / 08:00",
+  );
+  assert.equal(
+    readerContextProgressLabel({
+      sentenceIndex: -1,
+      sentenceCount: 12,
+      timelinePositionLabel: "",
+      timelineTotalLabel: "08:00",
+    }),
+    "共 12 句 · 08:00",
+  );
+});
+
 test("isRectFullyVisibleWithinReaderChrome treats fixed player overlap as not visible", () => {
   const bounds = { top: 78, bottom: 704 };
 
@@ -33,6 +57,27 @@ test("isRectFullyVisibleWithinReaderChrome treats fixed player overlap as not vi
   assert.equal(
     isRectFullyVisibleWithinReaderChrome({ top: 660, bottom: 730, height: 70 }, bounds),
     false,
+  );
+});
+
+test("readerChromeBoundsForFixedControls keeps fixed player overlap out of the readable band", () => {
+  assert.deepEqual(
+    readerChromeBoundsForFixedControls({
+      viewportHeight: 844,
+      navBottom: 60,
+      playerTop: 704,
+      margin: 18,
+    }),
+    { top: 78, bottom: 686 },
+  );
+  assert.deepEqual(
+    readerChromeBoundsForFixedControls({
+      viewportHeight: 320,
+      navBottom: 84,
+      playerTop: 118,
+      margin: 18,
+    }),
+    { top: 102, bottom: 100 },
   );
 });
 
@@ -49,6 +94,31 @@ test("scrollTargetForRectWithinReaderChrome centers short sentences in the reada
 test("sentencePointerAction keeps single click for selecting and double click for playback", () => {
   assert.equal(sentencePointerAction(1), "select");
   assert.equal(sentencePointerAction(2), "play");
+});
+
+test("readerSentenceInteraction keeps prose quiet except for the current sentence", () => {
+  assert.deepEqual(
+    readerSentenceInteraction({
+      sentenceIndex: 4,
+      sentenceCount: 12,
+      isCurrent: false,
+      isPlaying: false,
+    }),
+    {},
+  );
+  assert.deepEqual(
+    readerSentenceInteraction({
+      sentenceIndex: 4,
+      sentenceCount: 12,
+      isCurrent: true,
+      isPlaying: true,
+    }),
+    {
+      ariaCurrent: "location",
+      ariaLabel: "正在播放，第 5 / 12 句。按 Enter 播放或暂停；双击任意句可从该句播放。",
+      tabIndex: 0,
+    },
+  );
 });
 
 test("zenModeShortcutAction toggles with Z only outside interactive targets", () => {

@@ -19,7 +19,14 @@ import {
   Settings2,
   X,
 } from "lucide-react";
-import { type SyntheticEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type SyntheticEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import {
@@ -70,6 +77,9 @@ import {
 import {
   isRectFullyVisibleWithinReaderChrome,
   normalizeReadingTitle,
+  readerChromeBoundsForFixedControls,
+  readerContextProgressLabel,
+  readerSentenceInteraction,
   sentencePointerAction,
   scrollTargetForRectWithinReaderChrome,
   shouldShowReaderNavContext,
@@ -84,7 +94,7 @@ type ProgressInput = Pick<
 >;
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2] as const;
-const PLAYBACK_MODES: PlaybackMode[] = ["repeat_one", "sequential", "repeat_list"];
+const PLAYBACK_MODES: PlaybackMode[] = ["sequential", "repeat_list", "repeat_one"];
 const SCROLL_KEYS = new Set(["ArrowDown", "ArrowUp", "End", "Home", "PageDown", "PageUp"]);
 const READER_CHROME_MARGIN = 18;
 const SKIP_BACK_SECONDS = 15;
@@ -157,6 +167,17 @@ function PlaybackModeIcon({ mode }: { mode: PlaybackMode }) {
     return <Repeat aria-hidden="true" />;
   }
   return <ChevronRight aria-hidden="true" />;
+}
+
+function compactPlaybackModeLabel(mode: PlaybackMode) {
+  switch (mode) {
+    case "repeat_one":
+      return "单曲";
+    case "sequential":
+      return "顺序";
+    case "repeat_list":
+      return "列表";
+  }
 }
 
 export function ReaderPage({
@@ -247,6 +268,10 @@ export function ReaderPage({
   const currentSentenceIndex = sentences.findIndex(
     (sentence) => sentence.id === currentSentenceId,
   );
+  const sentenceIndexById = useMemo(
+    () => new Map(sentences.map((sentence, index) => [sentence.id, index])),
+    [sentences],
+  );
   const displayedElapsedSeconds =
     pendingSeekSeconds ?? (playbackCompleted ? playbackTimeline.totalSeconds : playbackTimeline.elapsedSeconds);
   const timelineTotalLabel = `${playbackTimeline.estimated ? "约 " : ""}${formatTimelineTime(
@@ -261,9 +286,12 @@ export function ReaderPage({
   const highlightedSentenceId = previewSeekResult?.sentenceId ?? currentSentenceId;
   const readingTitle = material ? normalizeReadingTitle(material.title) : "";
   const sourceDetail = material ? sourceDetailLabel(material, readingTitle) : null;
-  const readerContextProgress =
-    timelinePositionLabel ||
-    (playbackTimeline.totalSeconds > 0 ? timelineTotalLabel : sentences.length > 0 ? `共 ${sentences.length} 句` : "");
+  const readerContextProgress = readerContextProgressLabel({
+    sentenceIndex: currentSentenceIndex,
+    sentenceCount: sentences.length,
+    timelinePositionLabel,
+    timelineTotalLabel: playbackTimeline.totalSeconds > 0 ? timelineTotalLabel : "",
+  });
   const playbackNavigation = material ? materialPlaybackNavigation(material) : null;
   const previousPlaybackTarget =
     material && playbackNavigation
@@ -1112,6 +1140,21 @@ export function ReaderPage({
     handleSentenceClick(sentenceId);
   }
 
+  function handleSentenceKeyDown(
+    sentenceId: string,
+    event: ReactKeyboardEvent<HTMLSpanElement>,
+  ) {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    if (sentenceId === currentSentenceIdRef.current) {
+      handlePlayPause();
+    } else {
+      handleSentenceChange(sentenceId);
+    }
+  }
+
   function commitTimelineSeek(targetSeconds: number) {
     const result = seekTimeline(playbackTimeline, targetSeconds);
     setPendingSeekSeconds(null);
@@ -1223,13 +1266,13 @@ export function ReaderPage({
 
   function readerChromeBounds() {
     const navBottom = readerNavRef.current?.getBoundingClientRect().bottom ?? 0;
-    const playerTop = playerBarRef.current?.getBoundingClientRect().top ?? window.innerHeight;
-    const top = Math.min(window.innerHeight, navBottom + READER_CHROME_MARGIN);
-    const playerAwareBottom = playerTop - READER_CHROME_MARGIN;
-    const fallbackBottom = window.innerHeight - READER_CHROME_MARGIN;
-    const bottom =
-      playerAwareBottom > top + 44 ? Math.min(playerAwareBottom, fallbackBottom) : fallbackBottom;
-    return { top, bottom };
+    const playerTop = playerBarRef.current?.getBoundingClientRect().top ?? null;
+    return readerChromeBoundsForFixedControls({
+      viewportHeight: window.innerHeight,
+      navBottom,
+      playerTop,
+      margin: READER_CHROME_MARGIN,
+    });
   }
 
   function isCurrentSentenceFullyVisible() {
@@ -1611,7 +1654,7 @@ export function ReaderPage({
       {!error && material ? (
         <article className="reader-entry">
           <header ref={readerHeaderRef}>
-            <p className="eyebrow">{sourceLabel(material)}</p>
+            <p className="reader-source-type">{sourceLabel(material)}</p>
             <h1>{readingTitle}</h1>
             {sourceDetail ? <p className="reader-source">{sourceDetail}</p> : null}
           </header>
@@ -1622,11 +1665,19 @@ export function ReaderPage({
                   {paragraph.sentences.map((sentence) => {
                     const isCurrent = sentence.id === highlightedSentenceId;
                     const isPlaying = isCurrent && playbackStatus === "playing";
+                    const sentenceIndex = sentenceIndexById.get(sentence.id) ?? -1;
+                    const interaction = readerSentenceInteraction({
+                      sentenceIndex,
+                      sentenceCount: sentences.length,
+                      isCurrent,
+                      isPlaying,
+                    });
                     return (
                       <span
                         key={sentence.id}
                         id={sentence.id}
-                        aria-current={isCurrent ? "location" : undefined}
+                        aria-current={interaction.ariaCurrent}
+                        aria-label={interaction.ariaLabel}
                         className={[
                           "reader-sentence",
                           isCurrent ? "reader-sentence-current" : "",
@@ -1634,7 +1685,9 @@ export function ReaderPage({
                         ]
                           .filter(Boolean)
                           .join(" ")}
+                        tabIndex={interaction.tabIndex}
                         onClick={(event) => handleSentencePointer(sentence.id, event.detail)}
+                        onKeyDown={(event) => handleSentenceKeyDown(sentence.id, event)}
                       >
                         {sentence.text}
                       </span>
@@ -1663,210 +1716,108 @@ export function ReaderPage({
       ) : null}
 
       {!zenMode && !error && material && sentences.length > 0 ? (
-        <section ref={playerBarRef} className="player-bar" aria-label="朗读控制">
-          <div className="player-position" aria-live="polite">
-            <strong>{playbackLabel}</strong>
-            <span>{timelinePositionLabel || timelineTotalLabel}</span>
-            {completedPromptItem ? (
-              <span className="player-next-prompt">
-                继续：{normalizeReadingTitle(completedPromptItem.title)}
-                <button
-                  className="inline-action"
-                  type="button"
-                  onClick={() => {
-                    if (nextPlaybackTarget) {
-                      navigateToMaterial(nextPlaybackTarget.materialId, {
-                        autoplay: nextPlaybackTarget.autoplay,
-                      });
-                    }
-                  }}
-                >
-                  继续
-                </button>
-              </span>
-            ) : null}
-            {renderPlaybackIssues()}
-          </div>
-          <div className="player-controls">
-            <div ref={playbackModeMenuRef} className="player-setting playback-mode">
-              <span id="playback-mode-label">模式</span>
-              <button
-                ref={playbackModeTriggerRef}
-                className="player-setting-button playback-mode-button"
-                type="button"
-                aria-haspopup="listbox"
-                aria-expanded={showPlaybackModeMenu}
-                aria-labelledby="playback-mode-label playback-mode-value"
-                title="播放模式"
-                onClick={handlePlaybackModeMenuToggle}
-              >
-                <PlaybackModeIcon mode={playbackMode} />
-                <span id="playback-mode-value">{playbackModeLabel(playbackMode)}</span>
-                <ChevronDown
-                  aria-hidden="true"
-                  className={showPlaybackModeMenu ? "chevron chevron-open" : "chevron"}
+        <section ref={playerBarRef} className="player-bar player-bar-slim" aria-label="朗读控制">
+              <div className="player-timeline player-timeline-slim">
+                <span className="timeline-time timeline-time-combo">
+                  {formatTimelineTime(displayedElapsedSeconds)}/{timelineTotalLabel.replace(/^约\s*/, "")}
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={Math.max(playbackTimeline.totalSeconds, 1)}
+                  step={0.1}
+                  value={Math.min(displayedElapsedSeconds, Math.max(playbackTimeline.totalSeconds, 1))}
+                  aria-label="朗读进度"
+                  onChange={(event) => handleTimelinePreview(Number(event.target.value))}
+                  onPointerUp={commitTimelineInput}
+                  onTouchEnd={commitTimelineInput}
+                  onKeyUp={commitTimelineInput}
+                  onBlur={commitTimelineInput}
                 />
-              </button>
-              {showPlaybackModeMenu ? (
-                <div className="player-setting-menu playback-mode-menu" role="listbox" aria-label="播放模式">
-                  {PLAYBACK_MODES.map((mode) => (
+              </div>
+              <div className="player-actions-slim">
+                <div className="player-settings-slim">
+                  <div ref={playbackModeMenuRef} className="player-setting playback-mode">
+                    <span id="playback-mode-label">模式</span>
                     <button
-                      key={mode}
+                      ref={playbackModeTriggerRef}
+                      className="player-setting-button playback-mode-button"
                       type="button"
-                      role="option"
-                      aria-selected={mode === playbackMode}
-                      onClick={() => selectPlaybackMode(mode)}
+                      aria-haspopup="listbox"
+                      aria-expanded={showPlaybackModeMenu}
+                      aria-label={`播放模式：${playbackModeLabel(playbackMode)}`}
+                      title="播放模式"
+                      onClick={handlePlaybackModeMenuToggle}
                     >
-                      <span>{playbackModeLabel(mode)}</span>
-                      {mode === playbackMode ? <Check aria-hidden="true" /> : null}
+                      <PlaybackModeIcon mode={playbackMode} />
+                      <span>{compactPlaybackModeLabel(playbackMode)}</span>
+                      <ChevronDown aria-hidden="true" className={showPlaybackModeMenu ? "chevron chevron-open" : "chevron"} />
                     </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-            <div ref={playbackRateMenuRef} className="player-setting playback-rate">
-              <span id="playback-rate-label">倍速</span>
-              <button
-                ref={playbackRateTriggerRef}
-                className="player-setting-button playback-rate-button"
-                type="button"
-                aria-haspopup="listbox"
-                aria-expanded={showPlaybackRateMenu}
-                aria-labelledby="playback-rate-label playback-rate-value"
-                onClick={handlePlaybackRateMenuToggle}
-              >
-                <Gauge aria-hidden="true" />
-                <span id="playback-rate-value">{playbackRate}×</span>
-                <ChevronDown
-                  aria-hidden="true"
-                  className={showPlaybackRateMenu ? "chevron chevron-open" : "chevron"}
-                />
-              </button>
-              {showPlaybackRateMenu ? (
-                <div className="player-setting-menu playback-rate-menu" role="listbox" aria-label="播放倍速">
-                  {PLAYBACK_RATES.map((rate) => (
+                    {showPlaybackModeMenu ? (
+                      <div className="player-setting-menu playback-mode-menu" role="listbox" aria-label="播放模式">
+                        {PLAYBACK_MODES.map((mode) => (
+                          <button key={mode} type="button" role="option" aria-selected={mode === playbackMode} onClick={() => selectPlaybackMode(mode)}>
+                            <PlaybackModeIcon mode={mode} />
+                            <span>{playbackModeLabel(mode)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div ref={playbackRateMenuRef} className="player-setting playback-rate">
+                    <span id="playback-rate-label">倍速</span>
                     <button
-                      key={rate}
+                      ref={playbackRateTriggerRef}
+                      className="player-setting-button playback-rate-button"
                       type="button"
-                      role="option"
-                      aria-selected={rate === playbackRate}
-                      onClick={() => selectPlaybackRate(rate)}
+                      aria-haspopup="listbox"
+                      aria-expanded={showPlaybackRateMenu}
+                      aria-labelledby="playback-rate-label playback-rate-value"
+                      onClick={handlePlaybackRateMenuToggle}
                     >
-                      <span>{rate}×</span>
-                      {rate === playbackRate ? <Check aria-hidden="true" /> : null}
+                      <Gauge aria-hidden="true" />
+                      <span id="playback-rate-value">{playbackRate}×</span>
+                      <ChevronDown aria-hidden="true" className={showPlaybackRateMenu ? "chevron chevron-open" : "chevron"} />
                     </button>
-                  ))}
+                    {showPlaybackRateMenu ? (
+                      <div className="player-setting-menu playback-rate-menu" role="listbox" aria-label="播放倍速">
+                        {PLAYBACK_RATES.map((rate) => (
+                          <button key={rate} type="button" role="option" aria-selected={rate === playbackRate} onClick={() => selectPlaybackRate(rate)}>
+                            <span>{rate}×</span>
+                            {rate === playbackRate ? <Check aria-hidden="true" /> : null}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-              ) : null}
-            </div>
-            <div className="player-timeline">
-              <span className="timeline-time">{formatTimelineTime(displayedElapsedSeconds)}</span>
-              <input
-                type="range"
-                min={0}
-                max={Math.max(playbackTimeline.totalSeconds, 1)}
-                step={0.1}
-                value={Math.min(displayedElapsedSeconds, Math.max(playbackTimeline.totalSeconds, 1))}
-                aria-label="朗读进度"
-                onChange={(event) => handleTimelinePreview(Number(event.target.value))}
-                onPointerUp={commitTimelineInput}
-                onTouchEnd={commitTimelineInput}
-                onKeyUp={commitTimelineInput}
-                onBlur={commitTimelineInput}
-              />
-              <span className="timeline-time">{timelineTotalLabel}</span>
-            </div>
-            {showReturnToCurrent ? (
-              <button className="button button-secondary return-current" type="button" onClick={returnToCurrentSentence}>
-                <LocateFixed aria-hidden="true" />
-                回到当前句
-              </button>
-            ) : null}
-            <button
-              className="icon-button player-icon-button"
-              type="button"
-              disabled={!previousPlaybackTarget}
-              aria-label="上一篇"
-              title="上一篇"
-              onClick={() => {
-                if (previousPlaybackTarget) {
-                  navigateToMaterial(previousPlaybackTarget.materialId, {
-                    autoplay: previousPlaybackTarget.autoplay,
-                  });
-                }
-              }}
-            >
-              <ChevronLeft aria-hidden="true" />
-            </button>
-            <button
-              className="icon-button player-icon-button"
-              type="button"
-              aria-label="快退 15 秒"
-              title="快退 15 秒"
-              onClick={() => handleTimelineSkip(-SKIP_BACK_SECONDS)}
-            >
-              <Rewind aria-hidden="true" />
-            </button>
-            <button
-              className="icon-button player-primary"
-              type="button"
-              disabled={playbackStatus === "loading"}
-              aria-label={
-                playbackStatus === "loading"
-                  ? "正在准备音频"
-                  : playbackStatus === "playing"
-                    ? "暂停"
-                    : playbackCompleted
-                      ? "从头播放"
-                      : "播放"
-              }
-              title={
-                playbackStatus === "loading"
-                  ? "正在准备音频"
-                  : playbackStatus === "playing"
-                    ? "暂停"
-                    : playbackCompleted
-                      ? "从头播放"
-                      : "播放"
-              }
-              onClick={handlePlayPause}
-            >
-              {playbackStatus === "loading" ? (
-                <LoaderCircle aria-hidden="true" className="spin" />
-              ) : playbackStatus === "playing" ? (
-                <Pause aria-hidden="true" />
-              ) : playbackCompleted ? (
-                <RotateCcw aria-hidden="true" />
-              ) : (
-                <Play aria-hidden="true" />
-              )}
-            </button>
-            <button
-              className="icon-button player-icon-button"
-              type="button"
-              aria-label="前进 30 秒"
-              title="前进 30 秒"
-              onClick={() => handleTimelineSkip(SKIP_FORWARD_SECONDS)}
-            >
-              <FastForward aria-hidden="true" />
-            </button>
-            <button
-              className="icon-button player-icon-button"
-              type="button"
-              disabled={!nextPlaybackTarget}
-              aria-label="下一篇"
-              title="下一篇"
-              onClick={() => {
-                if (nextPlaybackTarget) {
-                  navigateToMaterial(nextPlaybackTarget.materialId, {
-                    autoplay: nextPlaybackTarget.autoplay,
-                  });
-                }
-              }}
-            >
-              <ChevronRight aria-hidden="true" />
-            </button>
-          </div>
+                {showReturnToCurrent ? (
+                  <button className="icon-button player-icon-button" type="button" aria-label="回到当前句" title="回到当前句" onClick={returnToCurrentSentence}>
+                    <LocateFixed aria-hidden="true" />
+                  </button>
+                ) : null}
+                <div className="player-transport-slim">
+                  {previousPlaybackTarget ? (
+                    <button className="icon-button player-icon-button" type="button" aria-label="上一篇" title="上一篇" onClick={() => navigateToMaterial(previousPlaybackTarget.materialId, { autoplay: previousPlaybackTarget.autoplay })}>
+                      <ChevronLeft aria-hidden="true" />
+                    </button>
+                  ) : null}
+                  <button className="icon-button player-icon-button" type="button" aria-label="快退 15 秒" title="快退 15 秒" onClick={() => handleTimelineSkip(-SKIP_BACK_SECONDS)}>
+                    <Rewind aria-hidden="true" />
+                  </button>
+                  <button className="icon-button player-primary" type="button" disabled={playbackStatus === "loading"} aria-label={playbackStatus === "loading" ? "正在准备音频" : playbackStatus === "playing" ? "暂停" : playbackCompleted ? "从头播放" : "播放"} title={playbackStatus === "loading" ? "正在准备音频" : playbackStatus === "playing" ? "暂停" : playbackCompleted ? "从头播放" : "播放"} onClick={handlePlayPause}>
+                    {playbackStatus === "loading" ? <LoaderCircle aria-hidden="true" className="spin" /> : playbackStatus === "playing" ? <Pause aria-hidden="true" /> : playbackCompleted ? <RotateCcw aria-hidden="true" /> : <Play aria-hidden="true" />}
+                  </button>
+                  <button className="icon-button player-icon-button" type="button" aria-label="前进 30 秒" title="前进 30 秒" onClick={() => handleTimelineSkip(SKIP_FORWARD_SECONDS)}>
+                    <FastForward aria-hidden="true" />
+                  </button>
+                  {nextPlaybackTarget ? (
+                    <button className="icon-button player-icon-button" type="button" aria-label="下一篇" title="下一篇" onClick={() => navigateToMaterial(nextPlaybackTarget.materialId, { autoplay: nextPlaybackTarget.autoplay })}>
+                      <ChevronRight aria-hidden="true" />
+                    </button>
+                  ) : null}
+                </div>
+              </div>
         </section>
       ) : null}
     </main>
