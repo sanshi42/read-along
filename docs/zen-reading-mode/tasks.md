@@ -26,5 +26,5 @@
 - Goal: 完整运行自动检查并根据验证结果归档 Topic。
 - Depends on: T003
 - Verification: 运行 `make check`；完成浏览器交互验证；通过后标记 Topic Done。
-- Status: Blocked
-- Blocked: `make check` 通过，Chrome 桌面禅模式进入、`Z` 切换、`Escape` 退出、全屏失败降级、深色主题和普通播放器恢复已验证；但当前 Chrome/AppleScript 验证无法把窗口缩到 390px，窄屏真实浏览器验证未完成，因此 Topic 暂停，未标记 Done。
+- Status: Done
+- Verified: `make check` 通过；浏览器验证桌面阅读页、桌面禅模式、`Z` 切换、`Escape` 退出、全屏失败降级、普通播放器恢复，以及 390x844 窄屏浅色和深色禅模式布局。
