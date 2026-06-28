@@ -1,498 +1,173 @@
 from __future__ import annotations
 
-import math
-import os
-import stat
-import subprocess
-import wave
+from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-from read_along import tts
-from read_along.tts import MacOSSayTTS, TTSGenerationError
+from read_along.tts import TTSGenerationError
+from read_along.tts.adapters.sherpa import SherpaOnnxTTSBackend
+from read_along.tts.config import SherpaOnnxTTSConfig, TTSConfigurationError
 
 
-def write_wav(path: Path, payload: bytes = b'audio') -> None:
-    with wave.open(str(path), 'wb') as audio:
-        audio.setnchannels(1)
-        audio.setsampwidth(2)
-        audio.setframerate(8000)
-        audio.writeframes(payload or b'\0\0')
+@dataclass
+class FakeGeneratedAudio:
+    samples: list[float]
+    sample_rate: int
 
 
-def executable(tmp_path: Path) -> Path:
-    command = tmp_path / 'say'
-    command.write_text('#!/bin/sh\n')
-    command.chmod(0o700)
-    return command
+class FakeOfflineTts:
+    def __init__(self, config: Any) -> None:
+        self.config = config
+        self.calls: list[tuple[str, int, float]] = []
+
+    def generate(self, text: str, *, sid: int, speed: float) -> FakeGeneratedAudio:
+        self.calls.append((text, sid, speed))
+        return FakeGeneratedAudio(samples=[0.0, 0.1, -0.1], sample_rate=24000)
 
 
-def configured_tts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MacOSSayTTS:
-    command = executable(tmp_path)
-    monkeypatch.setattr(tts.sys, 'platform', 'darwin')
-    return MacOSSayTTS(command=command)
+class FakeSherpaModule:
+    def __init__(self, *, valid: bool = True) -> None:
+        self.valid = valid
+        self.created_tts: FakeOfflineTts | None = None
+
+    class OfflineTtsKokoroModelConfig(SimpleNamespace):
+        pass
+
+    class OfflineTtsVitsModelConfig(SimpleNamespace):
+        pass
+
+    class OfflineTtsModelConfig(SimpleNamespace):
+        pass
+
+    class OfflineTtsConfig:
+        def __init__(self, **kwargs: object) -> None:
+            self.__dict__.update(kwargs)
+            self.model: Any = kwargs['model']
+            self.max_num_sentences: object = kwargs['max_num_sentences']
+
+        def validate(self) -> bool:
+            return self.model.sherpa_module.valid
+
+    def OfflineTts(self, config: Any) -> FakeOfflineTts:  # noqa: N802 - mirrors sherpa_onnx API
+        self.created_tts = FakeOfflineTts(config)
+        return self.created_tts
 
 
-def successful_run(
-    args: list[str],
-    **kwargs: object,
-) -> subprocess.CompletedProcess[str]:
-    write_wav(Path(args[2]))
-    return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
+class FakeSoundFileModule:
+    def __init__(self) -> None:
+        self.calls: list[tuple[Path, list[float], int, str]] = []
+
+    def write(self, file: Path, data: list[float], *, samplerate: int, subtype: str) -> None:
+        self.calls.append((file, data, samplerate, subtype))
+        file.write_bytes(b'RIFFfake-wave')
 
 
-def test_generate_creates_private_pcm_wav_from_standard_input(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    command = executable(tmp_path)
+def configured_sherpa(tmp_path: Path) -> SherpaOnnxTTSConfig:
+    model = tmp_path / 'model.onnx'
+    voices = tmp_path / 'voices.bin'
+    tokens = tmp_path / 'tokens.txt'
+    lexicon_us_en = tmp_path / 'lexicon-us-en.txt'
+    lexicon_zh = tmp_path / 'lexicon-zh.txt'
+    data_dir = tmp_path / 'espeak-ng-data'
+    for path in (model, voices, tokens, lexicon_us_en, lexicon_zh):
+        path.write_text('ok', encoding='utf-8')
+    data_dir.mkdir()
+    return SherpaOnnxTTSConfig(
+        model_type='kokoro',
+        kokoro_model=model,
+        kokoro_voices=voices,
+        kokoro_tokens=tokens,
+        kokoro_data_dir=data_dir,
+        sid=7,
+        provider='cpu',
+        num_threads=3,
+        speed=0.85,
+        debug=True,
+    )
+
+
+def test_sherpa_kokoro_generates_wav_from_original_sentence(tmp_path: Path) -> None:
+    sherpa = FakeSherpaModule()
+    soundfile = FakeSoundFileModule()
+    config = configured_sherpa(tmp_path)
     output_path = tmp_path / 'sentence.wav'
-    captured: dict[str, object] = {}
 
-    def fake_run(
-        args: list[str],
-        *,
-        input: str,
-        stdout: int,
-        stderr: int,
-        text: bool,
-        timeout: float,
-        check: bool,
-    ) -> subprocess.CompletedProcess[str]:
-        captured.update(
-            args=args,
-            input=input,
-            stdout=stdout,
-            stderr=stderr,
-            text=text,
-            timeout=timeout,
-            check=check,
-        )
-        write_wav(Path(args[2]))
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
+    backend = SherpaOnnxTTSBackend(config, sherpa_module=sherpa, soundfile_module=soundfile)
+    result = backend.generate('“事实判断”和 emoji 😊 都要原样朗读。', output_path)
 
-    monkeypatch.setattr(tts.sys, 'platform', 'darwin')
-    monkeypatch.setattr(tts.subprocess, 'run', fake_run)
-
-    result = MacOSSayTTS(command=command, timeout=12.5).generate('  忠实正文。  ', output_path)
-
-    args = captured['args']
-    assert isinstance(args, list)
-    temporary_path = Path(args[2])
-    assert result == output_path
-    assert args == [
-        str(command.resolve()),
-        '--output-file',
-        str(temporary_path),
-        '--file-format=WAVE',
-        '--data-format=LEI16@22050',
-        '--input-file=-',
-    ]
-    assert temporary_path.parent == tmp_path
-    assert temporary_path.name.startswith('.sentence.')
-    assert captured['input'] == '忠实正文'
-    assert captured['stdout'] == subprocess.DEVNULL
-    assert captured['stderr'] == subprocess.PIPE
-    assert captured['text'] is True
-    assert captured['timeout'] == 12.5
-    assert captured['check'] is True
-    assert output_path.read_bytes().startswith(b'RIFF')
-    assert stat.S_IMODE(output_path.stat().st_mode) == 0o600
-    assert list(tmp_path.glob('.sentence.*.wav')) == []
+    assert result.path == output_path
+    assert result.audio_format == 'wav'
+    assert result.media_type == 'audio/wav'
+    assert output_path.read_bytes() == b'RIFFfake-wave'
+    assert sherpa.created_tts is not None
+    assert sherpa.created_tts.calls == [('“事实判断”和 emoji 😊 都要原样朗读。', 7, 0.85)]
+    assert soundfile.calls == [(output_path, [0.0, 0.1, -0.1], 24000, 'PCM_16')]
 
 
-@pytest.mark.parametrize(
-    ('source_text', 'tts_input'),
-    [
-        ('演过《奋斗》里的华子。', '演过 奋斗 里的华子'),
-        ('和“伟大的灵魂都是雌雄同体”是一个意思。', '和 伟大的灵魂都是雌雄同体 是一个意思'),
-        ('“信仰”与“知识”的区别可能更相关。', '信仰 与 知识 的区别可能更相关'),
-        ('GPT-5，v2.1', 'GPT 5 v2 1'),
-        (
-            '“事实判断”和“价值判断”只是一种分类，但这不是唯一有效的分类方式',
-            '事实判断 和 价值判断 只是一种分类 但这不是唯一有效的分类方式',
-        ),
-        (
-            '最著名的尝试大概是17世纪法国思想家帕斯卡尔（Blaise Pascal），他提出过一个思想实验，叫做与“上帝打赌”。',
-            '最著名的尝试大概是17世纪法国思想家帕斯卡尔 Blaise Pascal 他提出过一个思想实验 叫做与 上帝打赌',
-        ),
-    ],
-)
-def test_generate_normalizes_wrapping_punctuation_before_running_say(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    source_text: str,
-    tts_input: str,
-) -> None:
-    command = executable(tmp_path)
-    output_path = tmp_path / 'sentence.wav'
-    captured: dict[str, object] = {}
+def test_sherpa_kokoro_builds_expected_offline_config(tmp_path: Path) -> None:
+    sherpa = FakeSherpaModule()
+    config = configured_sherpa(tmp_path)
 
-    def fake_run(
-        args: list[str],
-        *,
-        input: str,
-        **kwargs: object,
-    ) -> subprocess.CompletedProcess[str]:
-        captured['input'] = input
-        write_wav(Path(args[2]))
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
+    SherpaOnnxTTSBackend(config, sherpa_module=sherpa, soundfile_module=FakeSoundFileModule())
 
-    monkeypatch.setattr(tts.sys, 'platform', 'darwin')
-    monkeypatch.setattr(tts.subprocess, 'run', fake_run)
-
-    MacOSSayTTS(command=command).generate(source_text, output_path)
-
-    assert captured['input'] == tts_input
+    assert sherpa.created_tts is not None
+    offline_config = sherpa.created_tts.config
+    model_config = offline_config.model
+    kokoro_config = model_config.kokoro
+    assert kokoro_config.model == str(config.kokoro_model)
+    assert kokoro_config.voices == str(config.kokoro_voices)
+    assert kokoro_config.tokens == str(config.kokoro_tokens)
+    assert kokoro_config.data_dir == str(config.kokoro_data_dir)
+    assert kokoro_config.lexicon == (f'{tmp_path / "lexicon-us-en.txt"},{tmp_path / "lexicon-zh.txt"}')
+    assert kokoro_config.length_scale == pytest.approx(1 / config.speed)
+    assert model_config.provider == 'cpu'
+    assert model_config.num_threads == 3
+    assert model_config.debug is True
+    assert offline_config.max_num_sentences == 1
 
 
-def test_generate_rejects_sentence_without_readable_characters_before_running_say(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
-    monkeypatch.setattr(tts.subprocess, 'run', lambda *args, **kwargs: pytest.fail('不应运行 say'))
-
-    with pytest.raises(TTSGenerationError, match='句子文本不包含可朗读内容'):
-        adapter.generate(' “”…？！—— ', tmp_path / 'sentence.wav')
+def test_sherpa_kokoro_requires_model_paths(tmp_path: Path) -> None:
+    with pytest.raises(TTSConfigurationError, match='READ_ALONG_TTS_SHERPA_KOKORO_MODEL'):
+        SherpaOnnxTTSBackend(SherpaOnnxTTSConfig(kokoro_model=tmp_path / 'missing.onnx'))
 
 
-@pytest.mark.parametrize('timeout', [0, -1, math.inf, math.nan])
-def test_constructor_rejects_invalid_timeout(timeout: float) -> None:
-    with pytest.raises(ValueError, match='TTS 生成超时必须是大于零的有限数值'):
-        MacOSSayTTS(timeout=timeout)
+def test_sherpa_kokoro_requires_multilingual_lexicons(tmp_path: Path) -> None:
+    config = configured_sherpa(tmp_path)
+    (tmp_path / 'lexicon-zh.txt').unlink()
 
-
-def test_is_available_requires_macos_regular_executable(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    command = tmp_path / 'say'
-    adapter = MacOSSayTTS(command=command)
-
-    monkeypatch.setattr(tts.sys, 'platform', 'linux')
-    assert adapter.is_available() is False
-
-    monkeypatch.setattr(tts.sys, 'platform', 'darwin')
-    assert adapter.is_available() is False
-
-    command.mkdir()
-    assert adapter.is_available() is False
-
-    command.rmdir()
-    command.write_text('#!/bin/sh\n')
-    command.chmod(0o600)
-    assert adapter.is_available() is False
-
-    command.chmod(0o700)
-    assert adapter.is_available() is True
-
-
-def test_is_available_resolves_default_command_for_each_call(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    command = executable(tmp_path)
-    found: str | None = None
-    monkeypatch.setattr(tts.sys, 'platform', 'darwin')
-    monkeypatch.setattr(tts.shutil, 'which', lambda name: found)
-    adapter = MacOSSayTTS()
-
-    assert adapter.is_available() is False
-
-    found = str(command)
-
-    assert adapter.is_available() is True
-
-
-def test_generate_rejects_blank_sentence_before_running_say(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
-    monkeypatch.setattr(tts.subprocess, 'run', lambda *args, **kwargs: pytest.fail('不应运行 say'))
-
-    with pytest.raises(TTSGenerationError, match='句子文本不能为空'):
-        adapter.generate(' \n\t ', tmp_path / 'sentence.wav')
-
-
-def test_generate_rejects_non_wav_path(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
-
-    with pytest.raises(TTSGenerationError, match=r'目标音频路径必须使用 \.wav 扩展名'):
-        adapter.generate('正文。', tmp_path / 'sentence.aiff')
-
-
-def test_generate_rejects_existing_target_without_modifying_it(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
-    output_path = tmp_path / 'sentence.wav'
-    output_path.write_bytes(b'existing')
-
-    with pytest.raises(TTSGenerationError, match='目标音频已存在'):
-        adapter.generate('正文。', output_path)
-
-    assert output_path.read_bytes() == b'existing'
-
-
-def test_generate_rejects_broken_target_symlink(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
-    output_path = tmp_path / 'sentence.wav'
-    output_path.symlink_to(tmp_path / 'missing.wav')
-
-    with pytest.raises(TTSGenerationError, match='目标音频已存在'):
-        adapter.generate('正文。', output_path)
-
-    assert output_path.is_symlink()
-
-
-@pytest.mark.parametrize('parent_kind', ['missing', 'file'])
-def test_generate_rejects_invalid_parent_directory(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    parent_kind: str,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
-    parent = tmp_path / 'parent'
-    if parent_kind == 'file':
-        parent.write_text('not a directory')
-
-    with pytest.raises(TTSGenerationError, match='目标音频父目录不存在或不是目录'):
-        adapter.generate('正文。', parent / 'sentence.wav')
-
-
-def test_generate_reports_non_macos_environment(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(tts.sys, 'platform', 'linux')
-
-    with pytest.raises(TTSGenerationError, match='当前系统不是 macOS'):
-        MacOSSayTTS(command=executable(tmp_path)).generate('正文。', tmp_path / 'sentence.wav')
-
-
-def test_generate_reports_unavailable_say_command(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(tts.sys, 'platform', 'darwin')
-
-    with pytest.raises(TTSGenerationError, match='当前系统无法使用 macOS say 命令'):
-        MacOSSayTTS(command=tmp_path / 'missing').generate('正文。', tmp_path / 'sentence.wav')
-
-
-def test_generate_cleans_temporary_file_after_timeout(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
-
-    def time_out(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        raise subprocess.TimeoutExpired(
-            cmd=args,
-            timeout=60,
-            output='不可暴露的 stdout',
-            stderr='不可暴露的 stderr',
+    with pytest.raises(TTSConfigurationError, match='lexicon-zh.txt'):
+        SherpaOnnxTTSBackend(
+            config,
+            sherpa_module=FakeSherpaModule(),
+            soundfile_module=FakeSoundFileModule(),
         )
 
-    monkeypatch.setattr(tts.subprocess, 'run', time_out)
 
-    with pytest.raises(TTSGenerationError, match='macOS say 生成音频超时') as error:
-        adapter.generate('不可暴露的正文。', tmp_path / 'sentence.wav')
+def test_sherpa_rejects_invalid_runtime_config(tmp_path: Path) -> None:
+    sherpa = FakeSherpaModule(valid=False)
 
-    assert '不可暴露' not in str(error.value)
-    assert list(tmp_path.glob('.sentence.*.wav')) == []
-
-
-def test_generate_reports_limited_normalized_say_diagnostic(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
-    diagnostic = '  音色   不可用\n' + ('错' * 600)
-
-    def fail(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        raise subprocess.CalledProcessError(
-            returncode=1,
-            cmd=args,
-            output='不可暴露的 stdout',
-            stderr=diagnostic,
-        )
-
-    monkeypatch.setattr(tts.subprocess, 'run', fail)
-
-    with pytest.raises(TTSGenerationError) as error:
-        adapter.generate('不可暴露的正文。', tmp_path / 'sentence.wav')
-
-    message = str(error.value)
-    detail = message.removeprefix('macOS say 生成音频失败：')
-    assert message.startswith('macOS say 生成音频失败：音色 不可用 ')
-    assert '\n' not in message
-    assert len(detail) == 500
-    assert detail.endswith('…')
-    assert '不可暴露' not in message
-    assert list(tmp_path.glob('.sentence.*.wav')) == []
+    with pytest.raises(TTSConfigurationError, match='Sherpa ONNX TTS 配置无效'):
+        SherpaOnnxTTSBackend(configured_sherpa(tmp_path), sherpa_module=sherpa, soundfile_module=FakeSoundFileModule())
 
 
-def test_generate_uses_generic_error_when_say_has_no_diagnostic(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
+def test_sherpa_reports_empty_audio(tmp_path: Path) -> None:
+    class EmptyOfflineTts(FakeOfflineTts):
+        def generate(self, text: str, *, sid: int, speed: float) -> FakeGeneratedAudio:
+            return FakeGeneratedAudio(samples=[], sample_rate=24000)
 
-    def fail(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        raise subprocess.CalledProcessError(returncode=1, cmd=args, stderr=' \n ')
+    class EmptySherpa(FakeSherpaModule):
+        def OfflineTts(self, config: object) -> FakeOfflineTts:  # noqa: N802
+            self.created_tts = EmptyOfflineTts(config)
+            return self.created_tts
 
-    monkeypatch.setattr(tts.subprocess, 'run', fail)
+    backend = SherpaOnnxTTSBackend(
+        configured_sherpa(tmp_path),
+        sherpa_module=EmptySherpa(),
+        soundfile_module=FakeSoundFileModule(),
+    )
 
-    with pytest.raises(TTSGenerationError, match=r'^macOS say 生成音频失败。$'):
-        adapter.generate('正文。', tmp_path / 'sentence.wav')
-
-
-def test_generate_redacts_sentence_from_say_diagnostic(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
-    sentence = '不可暴露的正文。'
-
-    def fail(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        raise subprocess.CalledProcessError(
-            returncode=1,
-            cmd=args,
-            stderr=f'无法朗读：{sentence}',
-        )
-
-    monkeypatch.setattr(tts.subprocess, 'run', fail)
-
-    with pytest.raises(TTSGenerationError) as error:
-        adapter.generate(sentence, tmp_path / 'sentence.wav')
-
-    assert sentence not in str(error.value)
-    assert '[正文已隐藏]' in str(error.value)
-
-
-def test_generate_reports_command_disappearing_before_execution(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
-
-    def disappear(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        raise FileNotFoundError(args[0])
-
-    monkeypatch.setattr(tts.subprocess, 'run', disappear)
-
-    with pytest.raises(TTSGenerationError, match='macOS say 命令在生成音频前不可用'):
-        adapter.generate('正文。', tmp_path / 'sentence.wav')
-
-
-@pytest.mark.parametrize('content', [b'', b'not a wav'])
-def test_generate_rejects_invalid_wav_and_cleans_temporary_file(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    content: bytes,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
-
-    def write_invalid(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        Path(args[2]).write_bytes(content)
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
-
-    monkeypatch.setattr(tts.subprocess, 'run', write_invalid)
-
-    with pytest.raises(TTSGenerationError, match='macOS say 未生成有效的 WAV 音频'):
-        adapter.generate('正文。', tmp_path / 'sentence.wav')
-
-    assert not (tmp_path / 'sentence.wav').exists()
-    assert list(tmp_path.glob('.sentence.*.wav')) == []
-
-
-def test_generate_rejects_wav_without_audio_frames(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
-
-    def write_empty_wav(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        with wave.open(str(Path(args[2])), 'wb') as audio:
-            audio.setnchannels(1)
-            audio.setsampwidth(2)
-            audio.setframerate(8000)
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
-
-    monkeypatch.setattr(tts.subprocess, 'run', write_empty_wav)
-
-    with pytest.raises(TTSGenerationError, match='macOS say 未生成有效的 WAV 音频'):
-        adapter.generate('正文。', tmp_path / 'sentence.wav')
-
-    assert not (tmp_path / 'sentence.wav').exists()
-    assert list(tmp_path.glob('.sentence.*.wav')) == []
-
-
-def test_generate_does_not_overwrite_target_created_concurrently(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
-    output_path = tmp_path / 'sentence.wav'
-
-    def create_competing_target(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        write_wav(Path(args[2]))
-        output_path.write_bytes(b'concurrent')
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
-
-    monkeypatch.setattr(tts.subprocess, 'run', create_competing_target)
-
-    with pytest.raises(TTSGenerationError, match='目标音频已存在'):
-        adapter.generate('正文。', output_path)
-
-    assert output_path.read_bytes() == b'concurrent'
-    assert list(tmp_path.glob('.sentence.*.wav')) == []
-
-
-def test_generate_wraps_temporary_file_creation_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
-
-    def fail_temporary_file(*args: object, **kwargs: object) -> None:
-        raise PermissionError('不可写')
-
-    monkeypatch.setattr(tts, 'NamedTemporaryFile', fail_temporary_file)
-
-    with pytest.raises(TTSGenerationError, match='无法创建临时音频文件'):
-        adapter.generate('正文。', tmp_path / 'sentence.wav')
-
-
-def test_generate_wraps_final_file_creation_failure_and_cleans_temporary_file(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adapter = configured_tts(tmp_path, monkeypatch)
-    monkeypatch.setattr(tts.subprocess, 'run', successful_run)
-
-    def fail_link(
-        source: str | bytes | os.PathLike[str] | os.PathLike[bytes],
-        destination: str | bytes | os.PathLike[str] | os.PathLike[bytes],
-        *,
-        follow_symlinks: bool = True,
-    ) -> None:
-        raise PermissionError('不可写')
-
-    monkeypatch.setattr(tts.os, 'link', fail_link)
-
-    with pytest.raises(TTSGenerationError, match='无法保存生成的 WAV 音频'):
-        adapter.generate('正文。', tmp_path / 'sentence.wav')
-
-    assert list(tmp_path.glob('.sentence.*.wav')) == []
+    with pytest.raises(TTSGenerationError, match='未生成可播放音频'):
+        backend.generate('正文。', tmp_path / 'sentence.wav')

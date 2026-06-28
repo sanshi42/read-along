@@ -39,7 +39,8 @@ from read_along.models import (
 from read_along.playback_position import playback_time_position as derive_playback_time_position
 from read_along.repository import Repository
 from read_along.storage import StoragePaths
-from read_along.tts import MacOSSayTTS, TTSGenerationError, tts_input_fingerprint
+from read_along.tts import CachedAudio, TTSBackend, create_default_tts_backend
+from read_along.tts.factory import normalize_tts_error
 
 
 class MaterialLibraryError(RuntimeError):
@@ -96,12 +97,14 @@ def _clean_audio_error(message: str, *, sensitive_text: str, storage_home: Path)
     return cleaned.replace(str(storage_home), '[本地数据目录]') or '句子音频生成失败。'
 
 
-def _audio_relative_path(material_id: str, sentence_id: str) -> Path:
+def _audio_relative_path(material_id: str, sentence_id: str, audio_format: str) -> Path:
     for identity in (material_id, sentence_id):
         identity_path = Path(identity)
         if not identity or identity in {'.', '..'} or identity_path.is_absolute() or identity_path.parts != (identity,):
             raise AudioGenerationError('句子音频缓存路径不合法。')
-    return Path(material_id) / f'{sentence_id}.wav'
+    if audio_format not in {'wav', 'mp3'}:
+        raise AudioGenerationError(f'句子音频格式不支持：{audio_format}')
+    return Path(material_id) / f'{sentence_id}.{audio_format}'
 
 
 def _audio_cache_path_escaped(path: Path, audio_root: Path) -> bool:
@@ -127,6 +130,17 @@ def _discard_audio_cache(output_path: Path) -> None:
     _audio_fingerprint_path(output_path).unlink(missing_ok=True)
 
 
+def _discard_other_sentence_audio_cache(material_audio_dir: Path, sentence_id: str, keep_path: Path) -> None:
+    for candidate in material_audio_dir.glob(f'{sentence_id}.*'):
+        if candidate == keep_path or candidate == _audio_fingerprint_path(keep_path):
+            continue
+        if candidate.name.endswith('.tts-input'):
+            candidate.unlink(missing_ok=True)
+            continue
+        if candidate.suffix.lower() in {'.wav', '.mp3'}:
+            _discard_audio_cache(candidate)
+
+
 def _write_audio_cache_fingerprint(output_path: Path, fingerprint: str) -> None:
     try:
         _audio_fingerprint_path(output_path).write_text(fingerprint)
@@ -144,6 +158,32 @@ def _wav_duration_seconds(path: Path) -> float:
     if frame_rate <= 0 or frame_count < 0:
         raise AudioGenerationError('无法读取句子音频时长。')
     return frame_count / frame_rate
+
+
+def _mp3_duration_seconds(path: Path) -> float:
+    try:
+        from mutagen.mp3 import MP3
+
+        duration = MP3(path).info.length
+    except Exception as exc:
+        raise AudioGenerationError('无法读取句子音频时长。') from exc
+    if duration < 0:
+        raise AudioGenerationError('无法读取句子音频时长。')
+    return duration
+
+
+def _audio_duration_seconds(path: Path) -> float:
+    suffix = path.suffix.lower()
+    if suffix == '.wav':
+        return _wav_duration_seconds(path)
+    if suffix == '.mp3':
+        return _mp3_duration_seconds(path)
+    raise AudioGenerationError('无法读取句子音频时长。')
+
+
+def _tts_cache_fingerprint(text: str, tts: TTSBackend) -> str:
+    payload = {'text': text, 'tts': list(tts.fingerprint_parts())}
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 def _normalized_url(url: str) -> str:
@@ -177,10 +217,10 @@ def _normalized_url(url: str) -> str:
 class MaterialLibrary:
     """管理阅读材料的完整持久化生命周期。"""
 
-    def __init__(self, storage_paths: StoragePaths, *, tts: MacOSSayTTS | None = None) -> None:
+    def __init__(self, storage_paths: StoragePaths, *, tts: TTSBackend | None = None) -> None:
         self.storage_paths = storage_paths
         self.repository = Repository(storage_paths.database)
-        self.tts = tts or MacOSSayTTS()
+        self.tts = tts or create_default_tts_backend()
         self._audio_locks_guard = threading.Lock()
         self._audio_locks: dict[tuple[str, str], threading.Lock] = {}
 
@@ -370,7 +410,7 @@ class MaterialLibrary:
         assert progress is not None
         return progress
 
-    def get_or_generate_audio(self, material_id: str, sentence_id: str) -> Path:
+    def get_or_generate_audio(self, material_id: str, sentence_id: str) -> CachedAudio:
         """返回句子缓存音频，缺失时同步生成。"""
         with self._audio_lock(material_id, sentence_id):
             return self._get_or_generate_audio_locked(material_id, sentence_id)
@@ -416,7 +456,7 @@ class MaterialLibrary:
         except sqlite3.Error as exc:
             raise AudioGenerationError('无法更新句子音频状态。') from exc
 
-    def _get_or_generate_audio_locked(self, material_id: str, sentence_id: str) -> Path:
+    def _get_or_generate_audio_locked(self, material_id: str, sentence_id: str) -> CachedAudio:
         try:
             with closing(self.repository.connect()) as connection:
                 sentence = self.repository.get_sentence(
@@ -429,9 +469,9 @@ class MaterialLibrary:
         if sentence is None:
             raise AudioNotFoundError('句子音频不存在。')
 
-        relative_path = _audio_relative_path(material_id, sentence_id)
+        relative_path = _audio_relative_path(material_id, sentence_id, self.tts.audio_format)
         output_path = self.storage_paths.audio / relative_path
-        fingerprint = tts_input_fingerprint(sentence.text)
+        fingerprint = _tts_cache_fingerprint(sentence.text, self.tts)
         audio_root = self.storage_paths.audio.resolve()
         material_audio_dir = self.storage_paths.audio / material_id
         try:
@@ -482,6 +522,7 @@ class MaterialLibrary:
                 error_message=message,
             )
             raise AudioGenerationError(message)
+        _discard_other_sentence_audio_cache(material_audio_dir, sentence_id, output_path)
         if output_path.is_file() and not output_path.is_symlink():
             if _audio_cache_matches_tts_input(output_path, fingerprint):
                 duration = self._read_audio_duration(material_id, sentence_id, output_path)
@@ -493,7 +534,12 @@ class MaterialLibrary:
                     audio_duration_seconds=duration,
                     error_message=None,
                 )
-                return output_path
+                return CachedAudio(
+                    path=output_path,
+                    audio_format=self.tts.audio_format,
+                    media_type=self.tts.media_type,
+                    duration_seconds=duration,
+                )
             _discard_audio_cache(output_path)
         self._update_audio_state(
             material_id,
@@ -505,9 +551,10 @@ class MaterialLibrary:
         )
         try:
             self.tts.generate(sentence.text, output_path)
-        except TTSGenerationError as exc:
+        except Exception as exc:
+            generation_error = normalize_tts_error(exc)
             message = _clean_audio_error(
-                str(exc),
+                str(generation_error),
                 sensitive_text=sentence.text,
                 storage_home=self.storage_paths.home,
             )
@@ -519,7 +566,7 @@ class MaterialLibrary:
                 audio_duration_seconds=None,
                 error_message=message,
             )
-            raise AudioGenerationError(message) from exc
+            raise AudioGenerationError(message) from generation_error
         duration = self._read_audio_duration(material_id, sentence_id, output_path)
         try:
             _write_audio_cache_fingerprint(output_path, fingerprint)
@@ -542,11 +589,16 @@ class MaterialLibrary:
             audio_duration_seconds=duration,
             error_message=None,
         )
-        return output_path
+        return CachedAudio(
+            path=output_path,
+            audio_format=self.tts.audio_format,
+            media_type=self.tts.media_type,
+            duration_seconds=duration,
+        )
 
     def _read_audio_duration(self, material_id: str, sentence_id: str, output_path: Path) -> float:
         try:
-            return _wav_duration_seconds(output_path)
+            return _audio_duration_seconds(output_path)
         except AudioGenerationError as exc:
             output_path.unlink(missing_ok=True)
             self._update_audio_state(

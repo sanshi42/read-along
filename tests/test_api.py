@@ -13,7 +13,7 @@ from read_along.importers import UrlImportError
 from read_along.material_library import MaterialLibrary
 from read_along.models import MaterialImportResult, ReadingMaterialDraft, ReadingMaterialDraftParagraph, SourceType
 from read_along.storage import StoragePaths
-from read_along.tts import TTSGenerationError
+from read_along.tts import AudioFormat, GeneratedAudio, TTSGenerationError
 
 
 def write_wav(path: Path, *, duration_seconds: float = 1.25, sample_rate: int = 8000) -> None:
@@ -22,6 +22,19 @@ def write_wav(path: Path, *, duration_seconds: float = 1.25, sample_rate: int = 
         audio.setsampwidth(2)
         audio.setframerate(sample_rate)
         audio.writeframes(b'\0\0' * int(duration_seconds * sample_rate))
+
+
+class FakeTTSBackend:
+    engine_id = 'fake_tts'
+    audio_format: AudioFormat = 'wav'
+    media_type = 'audio/wav'
+
+    def fingerprint_parts(self) -> tuple[str, ...]:
+        return (self.engine_id, self.audio_format)
+
+    def generate(self, text: str, output_path: Path) -> GeneratedAudio:
+        write_wav(output_path, duration_seconds=1.25)
+        return GeneratedAudio(path=output_path, audio_format='wav', media_type='audio/wav')
 
 
 def test_health_endpoint() -> None:
@@ -335,8 +348,8 @@ def test_sentence_audio_endpoint_returns_retryable_generation_error(
     material = _save_url_material(library, sentences=['生成失败。'])
     sentence = material.material.paragraphs[0].sentences[0]
 
-    def fail_generation(text: str, output_path: Path) -> Path:
-        raise TTSGenerationError('macOS say 暂时不可用。')
+    def fail_generation(text: str, output_path: Path) -> GeneratedAudio:
+        raise TTSGenerationError('TTS 暂时不可用。')
 
     monkeypatch.setattr(library.tts, 'generate', fail_generation)
     app = create_app()
@@ -346,7 +359,7 @@ def test_sentence_audio_endpoint_returns_retryable_generation_error(
     response = client.get(f'/api/materials/{material.material.id}/sentences/{sentence.id}/audio')
 
     assert response.status_code == 503
-    assert response.json() == {'detail': 'macOS say 暂时不可用。'}
+    assert response.json() == {'detail': 'TTS 暂时不可用。'}
 
 
 def test_pdf_import_rejects_non_pdf_with_chinese_detail() -> None:
@@ -517,7 +530,7 @@ def test_url_import_returns_chinese_error(
 def _make_library(tmp_path: Path) -> MaterialLibrary:
     paths = StoragePaths.from_config(AppConfig(home=tmp_path / 'data'))
     initialize_database(paths)
-    return MaterialLibrary(paths)
+    return MaterialLibrary(paths, tts=FakeTTSBackend())
 
 
 def _save_url_material(
