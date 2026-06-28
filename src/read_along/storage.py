@@ -14,6 +14,7 @@ class StoragePaths:
     database: Path
     uploads: Path
     audio: Path
+    models: Path
     logs: Path
 
     @classmethod
@@ -24,10 +25,11 @@ class StoragePaths:
             database=config.home / 'read-along.sqlite3',
             uploads=config.home / 'uploads',
             audio=config.home / 'audio',
+            models=config.home / 'models',
             logs=config.home / 'logs',
         )
 
     def ensure_directories(self) -> None:
         """创建运行所需的目录。"""
-        for directory in (self.home, self.uploads, self.audio, self.logs):
+        for directory in (self.home, self.uploads, self.audio, self.models, self.logs):
             directory.mkdir(parents=True, exist_ok=True)

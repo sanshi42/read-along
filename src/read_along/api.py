@@ -156,8 +156,7 @@ def create_app() -> FastAPI:
         library: MaterialLibrary = Depends(get_material_library),
     ) -> Any:
         try:
-            audio_path = library.get_or_generate_audio(material_id, sentence_id)
-            material = library.get(material_id)
+            audio = library.get_or_generate_audio(material_id, sentence_id)
         except AudioNotFoundError as exc:
             return JSONResponse(
                 status_code=404,
@@ -168,21 +167,11 @@ def create_app() -> FastAPI:
                 status_code=503,
                 content={'detail': str(exc)},
             )
-        duration = next(
-            (
-                sentence.audio_duration_seconds
-                for paragraph in material.paragraphs
-                for sentence in paragraph.sentences
-                if sentence.id == sentence_id
-            ),
-            None,
-        )
         headers = {'Cache-Control': 'private, no-cache'}
-        if duration is not None:
-            headers['X-Read-Along-Audio-Duration-Seconds'] = f'{duration:g}'
+        headers['X-Read-Along-Audio-Duration-Seconds'] = f'{audio.duration_seconds:g}'
         return FileResponse(
-            audio_path,
-            media_type='audio/wav',
+            audio.path,
+            media_type=audio.media_type,
             headers=headers,
         )
 

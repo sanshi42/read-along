@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from read_along.tts.config import TTSConfig, load_tts_config
 
 READ_ALONG_HOME = 'READ_ALONG_HOME'
 
@@ -12,6 +14,7 @@ class AppConfig:
     """应用运行配置。"""
 
     home: Path
+    tts: TTSConfig = field(default_factory=load_tts_config)
 
 
 def default_home() -> Path:
@@ -23,4 +26,4 @@ def load_config() -> AppConfig:
     """从环境变量加载应用配置。"""
     configured_home = os.environ.get(READ_ALONG_HOME)
     home = Path(configured_home).expanduser() if configured_home else default_home()
-    return AppConfig(home=home)
+    return AppConfig(home=home, tts=load_tts_config())

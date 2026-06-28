@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,7 @@ from typer.testing import CliRunner
 from read_along import cli
 from read_along.cli import app
 from read_along.db import DatabaseSchemaError
+from read_along.tts.download import KokoroModelPaths
 
 
 class FakeUvicorn:
@@ -28,6 +30,7 @@ def test_root_cli_registers_serve_command() -> None:
 
     assert result.exit_code == 0
     assert 'serve' in result.output
+    assert 'tts' in result.output
     assert 'diagnose-db' not in result.output
 
 
@@ -86,3 +89,96 @@ def test_serve_reports_database_schema_failure(monkeypatch: pytest.MonkeyPatch) 
     assert 'Read Along 服务启动失败' in result.output
     assert '不支持当前数据库结构' in result.output
     assert fake_uvicorn.calls == []
+
+
+def test_tts_download_model_prints_env_without_writing_dotenv(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv('READ_ALONG_HOME', str(tmp_path / 'data'))
+    model_dir = tmp_path / 'data' / 'models' / 'tts' / 'kokoro-multi-lang-v1_1'
+    expected = KokoroModelPaths(
+        model_dir=model_dir,
+        model_path=model_dir / 'model.onnx',
+        voices_path=model_dir / 'voices.bin',
+        tokens_path=model_dir / 'tokens.txt',
+        data_dir=model_dir / 'espeak-ng-data',
+    )
+    calls: list[tuple[Path, bool]] = []
+
+    def fake_download(target_dir: Path, *, restart: bool = False, progress: object | None = None) -> KokoroModelPaths:
+        assert progress is not None
+        calls.append((target_dir, restart))
+        return expected
+
+    monkeypatch.setattr(cli, 'download_kokoro_model', fake_download)
+
+    result = CliRunner().invoke(app, ['tts', 'download-model', 'kokoro'])
+
+    assert result.exit_code == 0, result.output
+    assert calls == [(tmp_path / 'data' / 'models' / 'tts', False)]
+    assert 'READ_ALONG_TTS_ENGINE=sherpa_onnx_tts' in result.output
+    assert f'READ_ALONG_TTS_SHERPA_KOKORO_MODEL={expected.model_path}' in result.output
+    assert not (tmp_path / '.env').exists()
+
+
+def test_tts_download_model_restart_option_discards_partial_download(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv('READ_ALONG_HOME', str(tmp_path / 'data'))
+    model_dir = tmp_path / 'data' / 'models' / 'tts' / 'kokoro-multi-lang-v1_1'
+    expected = KokoroModelPaths(
+        model_dir=model_dir,
+        model_path=model_dir / 'model.onnx',
+        voices_path=model_dir / 'voices.bin',
+        tokens_path=model_dir / 'tokens.txt',
+        data_dir=model_dir / 'espeak-ng-data',
+    )
+    calls: list[tuple[Path, bool]] = []
+
+    def fake_download(target_dir: Path, *, restart: bool = False, progress: object | None = None) -> KokoroModelPaths:
+        assert progress is not None
+        calls.append((target_dir, restart))
+        return expected
+
+    monkeypatch.setattr(cli, 'download_kokoro_model', fake_download)
+
+    result = CliRunner().invoke(app, ['tts', 'download-model', 'kokoro', '--restart'])
+
+    assert result.exit_code == 0, result.output
+    assert calls == [(tmp_path / 'data' / 'models' / 'tts', True)]
+
+
+def test_tts_download_model_passes_interactive_progress_reporter(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv('READ_ALONG_HOME', str(tmp_path / 'data'))
+    model_dir = tmp_path / 'data' / 'models' / 'tts' / 'kokoro-multi-lang-v1_1'
+    expected = KokoroModelPaths(
+        model_dir=model_dir,
+        model_path=model_dir / 'model.onnx',
+        voices_path=model_dir / 'voices.bin',
+        tokens_path=model_dir / 'tokens.txt',
+        data_dir=model_dir / 'espeak-ng-data',
+    )
+    reporter = object()
+    calls: list[object | None] = []
+
+    @contextmanager
+    def fake_progress_context():
+        yield reporter
+
+    def fake_download(_: Path, *, restart: bool = False, progress: object | None = None) -> KokoroModelPaths:
+        assert not restart
+        calls.append(progress)
+        return expected
+
+    monkeypatch.setattr(cli, '_download_progress_context', fake_progress_context, raising=False)
+    monkeypatch.setattr(cli, 'download_kokoro_model', fake_download)
+
+    result = CliRunner().invoke(app, ['tts', 'download-model', 'kokoro'])
+
+    assert result.exit_code == 0, result.output
+    assert calls == [reporter]

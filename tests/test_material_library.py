@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import threading
 import wave
@@ -30,7 +31,7 @@ from read_along.models import (
     SourceType,
 )
 from read_along.storage import StoragePaths
-from read_along.tts import TTSGenerationError, tts_input_fingerprint
+from read_along.tts import AudioFormat, GeneratedAudio, TTSGenerationError
 
 
 def write_wav(path: Path, *, duration_seconds: float = 1.25, sample_rate: int = 8000) -> None:
@@ -41,16 +42,52 @@ def write_wav(path: Path, *, duration_seconds: float = 1.25, sample_rate: int = 
         audio.writeframes(b'\0\0' * int(duration_seconds * sample_rate))
 
 
-def expected_audio_path(paths: StoragePaths, material_id: str, sentence_id: str) -> Path:
-    return paths.audio / material_id / f'{sentence_id}.wav'
+class FakeTTSBackend:
+    engine_id = 'fake_tts'
+
+    def __init__(self, *, audio_format: AudioFormat = 'wav', voice: str = 'voice-a') -> None:
+        self.audio_format = audio_format
+        self.voice = voice
+        self.media_type = 'audio/wav' if audio_format == 'wav' else 'audio/mpeg'
+        self.calls: list[tuple[str, Path]] = []
+        self.fail_once = False
+
+    def fingerprint_parts(self) -> tuple[str, ...]:
+        return (self.engine_id, self.voice, self.audio_format)
+
+    def generate(self, text: str, output_path: Path) -> GeneratedAudio:
+        self.calls.append((text, output_path))
+        if self.fail_once:
+            self.fail_once = False
+            raise TTSGenerationError(f'暂时失败：{text}')
+        if self.audio_format == 'wav':
+            write_wav(output_path, duration_seconds=1.75)
+        else:
+            output_path.write_bytes(b'ID3fake-mp3')
+        return GeneratedAudio(path=output_path, audio_format=self.audio_format, media_type=self.media_type)
 
 
-def expected_audio_relative_path(material_id: str, sentence_id: str) -> str:
-    return f'{material_id}/{sentence_id}.wav'
+def expected_audio_path(
+    paths: StoragePaths,
+    material_id: str,
+    sentence_id: str,
+    *,
+    audio_format: str = 'wav',
+) -> Path:
+    return paths.audio / material_id / f'{sentence_id}.{audio_format}'
 
 
-def write_audio_fingerprint(audio_path: Path, sentence_text: str) -> None:
-    audio_fingerprint_path(audio_path).write_text(tts_input_fingerprint(sentence_text))
+def expected_audio_relative_path(material_id: str, sentence_id: str, *, audio_format: str = 'wav') -> str:
+    return f'{material_id}/{sentence_id}.{audio_format}'
+
+
+def expected_audio_fingerprint(sentence_text: str, tts: FakeTTSBackend) -> str:
+    payload = {'text': sentence_text, 'tts': list(tts.fingerprint_parts())}
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def write_audio_fingerprint(audio_path: Path, sentence_text: str, tts: FakeTTSBackend) -> None:
+    audio_fingerprint_path(audio_path).write_text(expected_audio_fingerprint(sentence_text, tts))
 
 
 def audio_fingerprint_path(audio_path: Path) -> Path:
@@ -60,7 +97,7 @@ def audio_fingerprint_path(audio_path: Path) -> Path:
 def material_library(tmp_path: Path) -> tuple[MaterialLibrary, StoragePaths]:
     paths = StoragePaths.from_config(AppConfig(home=tmp_path / 'data'))
     initialize_database(paths)
-    return MaterialLibrary(paths), paths
+    return MaterialLibrary(paths, tts=FakeTTSBackend()), paths
 
 
 def paragraph(*sentences: str, source_label: str | None = None) -> ReadingMaterialDraftParagraph:
@@ -426,73 +463,53 @@ def test_save_progress_validates_material_sentence_and_rate(tmp_path: Path) -> N
 
 def test_get_or_generate_audio_generates_and_persists_ready_state(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     library, paths = material_library(tmp_path)
     material = library.save(url_draft(sentences=('需要朗读。',)))
     sentence = material.material.paragraphs[0].sentences[0]
     original_updated_at = material.material.updated_at
-    calls: list[tuple[str, Path]] = []
+    fake_tts = library.tts
+    assert isinstance(fake_tts, FakeTTSBackend)
 
-    def generate(text: str, output_path: Path) -> Path:
-        calls.append((text, output_path))
-        write_wav(output_path, duration_seconds=1.75)
-        return output_path
-
-    monkeypatch.setattr(library.tts, 'generate', generate)
-
-    audio_path = library.get_or_generate_audio(material.material.id, sentence.id)
+    audio = library.get_or_generate_audio(material.material.id, sentence.id)
 
     expected_path = expected_audio_path(paths, material.material.id, sentence.id)
     reopened = library.get(material.material.id)
     reopened_sentence = reopened.paragraphs[0].sentences[0]
-    assert audio_path == expected_path
-    assert calls == [('需要朗读。', expected_path)]
+    assert audio.path == expected_path
+    assert audio.media_type == 'audio/wav'
+    assert audio.duration_seconds == pytest.approx(1.75)
+    assert fake_tts.calls == [('需要朗读。', expected_path)]
     assert reopened_sentence.audio_status is AudioStatus.READY
     assert reopened_sentence.audio_path == expected_audio_relative_path(material.material.id, sentence.id)
     assert reopened_sentence.audio_duration_seconds == pytest.approx(1.75)
-    assert audio_fingerprint_path(expected_path).read_text() == tts_input_fingerprint(sentence.text)
+    assert audio_fingerprint_path(expected_path).read_text() == expected_audio_fingerprint(sentence.text, fake_tts)
     assert reopened_sentence.error_message is None
     assert reopened.updated_at == original_updated_at
 
 
 def test_get_or_generate_audio_reuses_existing_cache(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     library, _ = material_library(tmp_path)
     material = library.save(url_draft(sentences=('需要缓存。',)))
     sentence = material.material.paragraphs[0].sentences[0]
-    calls = 0
-
-    def generate(text: str, output_path: Path) -> Path:
-        nonlocal calls
-        calls += 1
-        write_wav(output_path)
-        return output_path
-
-    monkeypatch.setattr(library.tts, 'generate', generate)
+    fake_tts = library.tts
+    assert isinstance(fake_tts, FakeTTSBackend)
 
     first = library.get_or_generate_audio(material.material.id, sentence.id)
     second = library.get_or_generate_audio(material.material.id, sentence.id)
 
     assert first == second
-    assert calls == 1
+    assert len(fake_tts.calls) == 1
 
 
 def test_clear_material_audio_cache_removes_files_and_resets_sentence_state(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     library, paths = material_library(tmp_path)
     material = library.save(url_draft(sentences=('第一句。', '第二句。')))
     sentences = material.material.paragraphs[0].sentences
-
-    def generate(text: str, output_path: Path) -> Path:
-        write_wav(output_path)
-        return output_path
-
-    monkeypatch.setattr(library.tts, 'generate', generate)
     for sentence in sentences:
         library.get_or_generate_audio(material.material.id, sentence.id)
     audio_dir = paths.audio / material.material.id
@@ -518,10 +535,12 @@ def test_get_or_generate_audio_repairs_state_when_cache_exists(
     library, paths = material_library(tmp_path)
     material = library.save(url_draft(sentences=('已经生成。',)))
     sentence = material.material.paragraphs[0].sentences[0]
+    fake_tts = library.tts
+    assert isinstance(fake_tts, FakeTTSBackend)
     expected_path = expected_audio_path(paths, material.material.id, sentence.id)
     expected_path.parent.mkdir(parents=True)
     write_wav(expected_path, duration_seconds=2.0)
-    write_audio_fingerprint(expected_path, sentence.text)
+    write_audio_fingerprint(expected_path, sentence.text, fake_tts)
     with sqlite3.connect(paths.database) as connection:
         connection.execute(
             """
@@ -538,10 +557,10 @@ def test_get_or_generate_audio_repairs_state_when_cache_exists(
         lambda text, output_path: pytest.fail('已有缓存时不应再次生成'),
     )
 
-    audio_path = library.get_or_generate_audio(material.material.id, sentence.id)
+    audio = library.get_or_generate_audio(material.material.id, sentence.id)
 
     reopened_sentence = library.get(material.material.id).paragraphs[0].sentences[0]
-    assert audio_path == expected_path
+    assert audio.path == expected_path
     assert reopened_sentence.audio_status is AudioStatus.READY
     assert reopened_sentence.audio_path == expected_audio_relative_path(material.material.id, sentence.id)
     assert reopened_sentence.audio_duration_seconds == pytest.approx(2.0)
@@ -550,30 +569,23 @@ def test_get_or_generate_audio_repairs_state_when_cache_exists(
 
 def test_get_or_generate_audio_regenerates_cache_without_current_tts_fingerprint(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     library, paths = material_library(tmp_path)
     material = library.save(url_draft(sentences=('“事实判断”和“价值判断”只是一种分类。',)))
     sentence = material.material.paragraphs[0].sentences[0]
+    fake_tts = library.tts
+    assert isinstance(fake_tts, FakeTTSBackend)
     expected_path = expected_audio_path(paths, material.material.id, sentence.id)
     expected_path.parent.mkdir(parents=True)
     write_wav(expected_path, duration_seconds=0.25)
-    calls: list[Path] = []
 
-    def generate(text: str, output_path: Path) -> Path:
-        calls.append(output_path)
-        write_wav(output_path, duration_seconds=1.25)
-        return output_path
-
-    monkeypatch.setattr(library.tts, 'generate', generate)
-
-    audio_path = library.get_or_generate_audio(material.material.id, sentence.id)
+    audio = library.get_or_generate_audio(material.material.id, sentence.id)
 
     ready_sentence = library.get(material.material.id).paragraphs[0].sentences[0]
-    assert audio_path == expected_path
-    assert calls == [expected_path]
-    assert ready_sentence.audio_duration_seconds == pytest.approx(1.25)
-    assert audio_fingerprint_path(expected_path).read_text() == tts_input_fingerprint(sentence.text)
+    assert audio.path == expected_path
+    assert fake_tts.calls == [(sentence.text, expected_path)]
+    assert ready_sentence.audio_duration_seconds == pytest.approx(1.75)
+    assert audio_fingerprint_path(expected_path).read_text() == expected_audio_fingerprint(sentence.text, fake_tts)
 
 
 def test_get_or_generate_audio_regenerates_when_ready_cache_is_missing(
@@ -603,9 +615,9 @@ def test_get_or_generate_audio_regenerates_when_ready_cache_is_missing(
 
     monkeypatch.setattr(library.tts, 'generate', generate)
 
-    audio_path = library.get_or_generate_audio(material.material.id, sentence.id)
+    audio = library.get_or_generate_audio(material.material.id, sentence.id)
 
-    assert audio_path == paths.audio / relative_path
+    assert audio.path == paths.audio / relative_path
     assert calls == 1
     assert library.get(material.material.id).paragraphs[0].sentences[0].audio_status is AudioStatus.READY
 
@@ -640,10 +652,10 @@ def test_get_or_generate_audio_records_failure_and_retries(
     assert failed_sentence.audio_path is None
     assert failed_sentence.error_message == message
 
-    audio_path = library.get_or_generate_audio(material.material.id, sentence.id)
+    audio = library.get_or_generate_audio(material.material.id, sentence.id)
 
     ready_sentence = library.get(material.material.id).paragraphs[0].sentences[0]
-    assert audio_path.is_file()
+    assert audio.path.is_file()
     assert attempts == 2
     assert ready_sentence.audio_status is AudioStatus.READY
     assert ready_sentence.audio_duration_seconds == pytest.approx(1.25)
@@ -823,9 +835,9 @@ def test_get_or_generate_audio_deduplicates_concurrent_requests_for_same_sentenc
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(library.get_or_generate_audio, material.material.id, sentence.id) for _ in range(2)]
-        paths = [future.result() for future in futures]
+        audios = [future.result() for future in futures]
 
-    assert paths[0] == paths[1]
+    assert audios[0].path == audios[1].path
     assert calls == 1
 
 
@@ -849,10 +861,10 @@ def test_get_or_generate_audio_allows_different_sentences_to_generate_concurrent
         futures = [
             executor.submit(library.get_or_generate_audio, material.material.id, sentence.id) for sentence in sentences
         ]
-        paths = [future.result() for future in futures]
+        audios = [future.result() for future in futures]
 
-    assert len(set(paths)) == 2
-    assert all(path.is_file() for path in paths)
+    assert len({audio.path for audio in audios}) == 2
+    assert all(audio.path.is_file() for audio in audios)
 
 
 def test_delete_is_idempotent_and_cleans_owned_files(tmp_path: Path) -> None:
