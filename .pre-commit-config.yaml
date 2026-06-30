@@ -17,3 +17,9 @@ repos:
         language: system
         pass_filenames: false
         files: ^(src|tests|pyproject\.toml)
+      - id: web-biome
+        name: biome check web
+        entry: npm run lint --prefix web
+        language: system
+        pass_filenames: false
+        files: ^web/(src|test|smoke|package\.json|biome\.json|tsconfig.*\.json|vite\.config\.ts)
