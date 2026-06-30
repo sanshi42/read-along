@@ -37,7 +37,6 @@ import {
   sentenceAudioUrl,
   type MaterialDetail,
   type MaterialNavigationItem,
-  type ReadingProgress,
 } from "../api";
 import {
   loadPlaybackModePreference,
@@ -50,30 +49,19 @@ import {
   type ThemePreference,
 } from "../readingPreferences";
 import {
-  SentenceAudioElementCache,
-  SentenceAudioPreparationQueue,
-  audioRepairPreloadWindow,
-  audioPreloadWindow,
-  initialAudioPreloadAnchor,
-  preparationErrorMessage,
-} from "./readerAudioPreparation";
-import {
-  buildPlaybackTimeline,
   formatTimelineTime,
   isInteractiveShortcutTarget,
-  progressInputForTimeline,
-  resumeSentenceIdForProgress,
   seekTimeline,
 } from "./readerPlaybackTimeline";
 import {
   playbackModeLabel,
-  playbackModeTargetForNaturalEnd,
-  playbackModeTargetForNext,
-  playbackModeTargetForPrevious,
   type PlaybackMode,
   type PlaybackModeNavigation,
-  type PlaybackModeTarget,
 } from "./playbackMode";
+import {
+  ReaderPlaybackSession,
+  type ReaderPlaybackSessionSnapshot,
+} from "./readerPlaybackSession";
 import {
   isRectFullyVisibleWithinReaderChrome,
   normalizeReadingTitle,
@@ -86,20 +74,20 @@ import {
   zenModeShortcutAction,
 } from "./readerPageViewModel";
 
-type PlaybackStatus = "idle" | "loading" | "playing" | "paused";
-type AudioRepairStatus = "idle" | "repairing" | "success" | "failed";
-type ProgressInput = Pick<
-  ReadingProgress,
-  "sentence_id" | "sentence_offset_seconds" | "playback_rate" | "playback_completed"
->;
-
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2] as const;
 const PLAYBACK_MODES: PlaybackMode[] = ["sequential", "repeat_list", "repeat_one"];
 const SCROLL_KEYS = new Set(["ArrowDown", "ArrowUp", "End", "Home", "PageDown", "PageUp"]);
 const READER_CHROME_MARGIN = 18;
 const SKIP_BACK_SECONDS = 15;
 const SKIP_FORWARD_SECONDS = 30;
-const PROGRESS_SAVE_INTERVAL_MS = 5000;
+const EMPTY_PLAYBACK_TIMELINE = {
+  items: [],
+  currentSentenceId: null,
+  currentOffsetSeconds: 0,
+  elapsedSeconds: 0,
+  totalSeconds: 0,
+  estimated: false,
+};
 
 interface ReaderPageProps {
   readingPreferences: ReadingPreferences;
@@ -149,16 +137,6 @@ function navigationItemForMaterial(
   );
 }
 
-function navigableMaterialTarget(
-  target: PlaybackModeTarget | null,
-  currentMaterialId: string,
-): PlaybackModeTarget | null {
-  if (!target || target.materialId === currentMaterialId) {
-    return null;
-  }
-  return target;
-}
-
 function PlaybackModeIcon({ mode }: { mode: PlaybackMode }) {
   if (mode === "repeat_one") {
     return <Repeat1 aria-hidden="true" />;
@@ -189,44 +167,18 @@ export function ReaderPage({
   const navigate = useNavigate();
   const [material, setMaterial] = useState<MaterialDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [currentSentenceId, setCurrentSentenceId] = useState<string | null>(null);
-  const [currentSentenceOffsetSeconds, setCurrentSentenceOffsetSeconds] = useState(0);
-  const [playbackRate, setPlaybackRate] = useState(1);
-  const [playbackCompleted, setPlaybackCompleted] = useState(false);
-  const [playbackStatus, setPlaybackStatus] = useState<PlaybackStatus>("idle");
-  const [playbackError, setPlaybackError] = useState<string | null>(null);
-  const [progressError, setProgressError] = useState<string | null>(null);
+  const [playbackSnapshot, setPlaybackSnapshot] =
+    useState<ReaderPlaybackSessionSnapshot | null>(null);
   const [showReturnToCurrent, setShowReturnToCurrent] = useState(false);
   const [showReadingPreferences, setShowReadingPreferences] = useState(false);
   const [showPlaybackRateMenu, setShowPlaybackRateMenu] = useState(false);
-  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(() =>
-    loadPlaybackModePreference(),
-  );
   const [showPlaybackModeMenu, setShowPlaybackModeMenu] = useState(false);
-  const [playbackModeError, setPlaybackModeError] = useState<string | null>(null);
   const [showReaderContext, setShowReaderContext] = useState(false);
   const [pendingSeekSeconds, setPendingSeekSeconds] = useState<number | null>(null);
-  const [audioRepairStatus, setAudioRepairStatus] = useState<AudioRepairStatus>("idle");
   const [materialReloadKey, setMaterialReloadKey] = useState(0);
   const [zenMode, setZenMode] = useState(false);
   const [zenFullscreenNotice, setZenFullscreenNotice] = useState(false);
-  const currentSentenceIdRef = useRef<string | null>(null);
-  const currentSentenceOffsetSecondsRef = useRef(0);
-  const playbackRateRef = useRef(1);
-  const playbackModeRef = useRef<PlaybackMode>(playbackMode);
-  const playbackCompletedRef = useRef(false);
-  const playbackStatusRef = useRef<PlaybackStatus>("idle");
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const audioPreparationRef = useRef<SentenceAudioPreparationQueue | null>(null);
-  const audioElementCacheRef = useRef<SentenceAudioElementCache<HTMLAudioElement> | null>(null);
-  const audioReloadTokenRef = useRef<string | null>(null);
-  const playbackGenerationRef = useRef(0);
-  const activeMaterialIdRef = useRef<string | null>(null);
-  const pendingProgressRef = useRef<ProgressInput | null>(null);
-  const savingProgressRef = useRef(false);
-  const progressBlockedRef = useRef(false);
-  const progressGenerationRef = useRef(0);
-  const lastProgressSaveAtRef = useRef(0);
+  const playbackSessionRef = useRef<ReaderPlaybackSession | null>(null);
   const autoplayOnMaterialLoadRef = useRef(false);
   const zenModeRef = useRef(false);
   const zenFullscreenActiveRef = useRef(false);
@@ -247,24 +199,16 @@ export function ReaderPage({
     () => material?.paragraphs.flatMap((paragraph) => paragraph.sentences) ?? [],
     [material],
   );
-  const playbackTimeline = useMemo(
-    () =>
-      buildPlaybackTimeline(
-        sentences.map((sentence) => ({
-          id: sentence.id,
-          text: sentence.text,
-          audio_duration_seconds: sentence.audio_duration_seconds,
-        })),
-        currentSentenceId
-          ? {
-              sentence_id: currentSentenceId,
-              sentence_offset_seconds: currentSentenceOffsetSeconds,
-              playback_completed: playbackCompleted,
-            }
-          : null,
-      ),
-    [sentences, currentSentenceId, currentSentenceOffsetSeconds, playbackCompleted],
-  );
+  const currentSentenceId = playbackSnapshot?.currentSentenceId ?? null;
+  const playbackRate = playbackSnapshot?.playbackRate ?? 1;
+  const playbackCompleted = playbackSnapshot?.playbackCompleted ?? false;
+  const playbackStatus = playbackSnapshot?.playbackStatus ?? "idle";
+  const playbackError = playbackSnapshot?.playbackError ?? null;
+  const progressError = playbackSnapshot?.progressError ?? null;
+  const playbackMode = playbackSnapshot?.playbackMode ?? loadPlaybackModePreference();
+  const playbackModeError = playbackSnapshot?.playbackModeError ?? null;
+  const audioRepairStatus = playbackSnapshot?.audioRepairStatus ?? "idle";
+  const playbackTimeline = playbackSnapshot?.timeline ?? EMPTY_PLAYBACK_TIMELINE;
   const currentSentenceIndex = sentences.findIndex(
     (sentence) => sentence.id === currentSentenceId,
   );
@@ -292,21 +236,8 @@ export function ReaderPage({
     timelinePositionLabel,
     timelineTotalLabel: playbackTimeline.totalSeconds > 0 ? timelineTotalLabel : "",
   });
-  const playbackNavigation = material ? materialPlaybackNavigation(material) : null;
-  const previousPlaybackTarget =
-    material && playbackNavigation
-      ? navigableMaterialTarget(
-          playbackModeTargetForPrevious(playbackMode, playbackNavigation),
-          material.id,
-        )
-      : null;
-  const nextPlaybackTarget =
-    material && playbackNavigation
-      ? navigableMaterialTarget(
-          playbackModeTargetForNext(playbackMode, playbackNavigation),
-          material.id,
-        )
-      : null;
+  const previousPlaybackTarget = playbackSnapshot?.previousTarget ?? null;
+  const nextPlaybackTarget = playbackSnapshot?.nextTarget ?? null;
   const completedPromptItem =
     material && playbackCompleted && nextPlaybackTarget
       ? navigationItemForMaterial(material, nextPlaybackTarget.materialId)
@@ -314,85 +245,81 @@ export function ReaderPage({
 
   useEffect(() => {
     void exitZenMode({ returnFocus: false });
-    discardPlayback();
-    audioElementCacheRef.current?.clear();
-    resetProgressSaving();
-    currentSentenceIdRef.current = null;
-    currentSentenceOffsetSecondsRef.current = 0;
-    playbackRateRef.current = 1;
-    playbackCompletedRef.current = false;
     followCurrentRef.current = true;
-    activeMaterialIdRef.current = materialId ?? null;
-    audioReloadTokenRef.current = null;
-    audioPreparationRef.current = materialId
-      ? new SentenceAudioPreparationQueue(async (sentenceId) => {
-          const duration = await prepareSentenceAudio(
-            materialId,
-            sentenceId,
-            audioReloadTokenRef.current,
-          );
-          if (duration !== null) {
-            updateSentenceAudioDuration(sentenceId, duration);
-          }
-        })
-      : null;
-    audioElementCacheRef.current = materialId
-      ? new SentenceAudioElementCache(
-          (sentenceId) =>
-            new Audio(sentenceAudioUrl(materialId, sentenceId, audioReloadTokenRef.current)),
-        )
-      : null;
-    setCurrentSentenceId(null);
-    setCurrentSentenceOffsetSeconds(0);
-    setPlaybackRate(1);
-    setPlaybackCompleted(false);
-    setPlaybackError(null);
-    setProgressError(null);
-    setAudioRepairStatus("idle");
+    setPlaybackSnapshot(null);
     clearZenFullscreenNotice();
     zenFullscreenActiveRef.current = false;
     setShowReturnToCurrent(false);
     setShowReaderContext(false);
-    updatePlaybackStatus("idle");
     setMaterial(null);
     setError(null);
 
+    let active = true;
+    let session: ReaderPlaybackSession | null = null;
+    let unsubscribe: (() => void) | null = null;
     if (!materialId) {
       setError("阅读材料地址不完整");
-      return;
+      return () => {
+        active = false;
+      };
     }
 
-    let active = true;
     getMaterial(materialId)
       .then((item) => {
         if (!active) {
           return;
         }
         setMaterial(item);
-        const progress = item.progress;
         const loadedSentences = item.paragraphs.flatMap((paragraph) => paragraph.sentences);
-        const loadedSentenceIds = loadedSentences.map((sentence) => sentence.id);
-        const initialSentenceId = resumeSentenceIdForProgress(loadedSentenceIds, progress);
-        if (progress && initialSentenceId) {
-          const initialOffset =
-            progress.playback_completed || initialSentenceId !== progress.sentence_id
-              ? 0
-              : progress.sentence_offset_seconds;
-          currentSentenceIdRef.current = initialSentenceId;
-          currentSentenceOffsetSecondsRef.current = initialOffset;
-          playbackRateRef.current = progress.playback_rate;
-          playbackCompletedRef.current = progress.playback_completed;
-          setCurrentSentenceId(initialSentenceId);
-          setCurrentSentenceOffsetSeconds(initialOffset);
-          setPlaybackRate(progress.playback_rate);
-          setPlaybackCompleted(progress.playback_completed);
-          updatePlaybackStatus("paused");
+        session = new ReaderPlaybackSession({
+          materialId,
+          sentences: loadedSentences.map((sentence) => ({
+            id: sentence.id,
+            text: sentence.text,
+            audio_duration_seconds: sentence.audio_duration_seconds,
+          })),
+          progress: item.progress,
+          navigation: materialPlaybackNavigation(item),
+          playbackMode: loadPlaybackModePreference(),
+          adapters: {
+            prepareAudio: (sentenceId, reloadToken) =>
+              prepareSentenceAudio(materialId, sentenceId, reloadToken),
+            createAudio: (sentenceId, reloadToken) =>
+              new Audio(sentenceAudioUrl(materialId, sentenceId, reloadToken)),
+            saveProgress: async (progress) => {
+              await saveProgress(materialId, progress);
+            },
+            clearAudioCache: () => clearMaterialAudioCache(materialId),
+            savePlaybackMode: savePlaybackModePreference,
+            navigate: (targetMaterialId, autoplay) => {
+              if (zenModeRef.current) {
+                void exitZenMode({ returnFocus: false });
+              }
+              autoplayOnMaterialLoadRef.current = autoplay;
+              navigate(`/materials/${targetMaterialId}`);
+            },
+            now: () => performance.now(),
+            createReloadToken: () => String(Date.now()),
+          },
+        });
+        playbackSessionRef.current = session;
+        let previousSentenceId = session.snapshot().currentSentenceId;
+        unsubscribe = session.subscribe((snapshot) => {
+          const sentenceChanged = previousSentenceId !== snapshot.currentSentenceId;
+          previousSentenceId = snapshot.currentSentenceId;
+          setPlaybackSnapshot(snapshot);
+          if (sentenceChanged && followCurrentRef.current) {
+            scheduleScrollToCurrent("smooth");
+          }
+        });
+        if (item.progress && session.snapshot().currentSentenceId) {
           scheduleScrollToCurrent("auto");
         }
-        scheduleAudioPreload(
-          initialAudioPreloadAnchor(loadedSentenceIds, progress),
-          loadedSentenceIds,
-        );
+        if (autoplayOnMaterialLoadRef.current) {
+          autoplayOnMaterialLoadRef.current = false;
+          followCurrentRef.current = true;
+          void session.playPause();
+        }
       })
       .catch((reason: unknown) => {
         if (active) {
@@ -401,6 +328,14 @@ export function ReaderPage({
       });
     return () => {
       active = false;
+      if (session) {
+        session.saveCurrentProgress();
+        unsubscribe?.();
+        session.dispose();
+        if (playbackSessionRef.current === session) {
+          playbackSessionRef.current = null;
+        }
+      }
     };
   }, [materialId, materialReloadKey]);
 
@@ -448,10 +383,6 @@ export function ReaderPage({
   }, [material, currentSentenceIndex]);
 
   useEffect(() => {
-    playbackModeRef.current = playbackMode;
-  }, [playbackMode]);
-
-  useEffect(() => {
     function handleFullscreenChange() {
       if (
         zenFullscreenActiveRef.current &&
@@ -468,19 +399,6 @@ export function ReaderPage({
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
     };
   }, []);
-
-  useEffect(() => {
-    if (!material || !autoplayOnMaterialLoadRef.current) {
-      return;
-    }
-    const sentenceId = currentSentenceIdRef.current ?? sentences[0]?.id;
-    if (!sentenceId) {
-      return;
-    }
-    autoplayOnMaterialLoadRef.current = false;
-    followCurrentRef.current = true;
-    void playSentence(sentenceId, false, currentSentenceOffsetSecondsRef.current);
-  }, [material, currentSentenceId, sentences]);
 
   useEffect(() => {
     if (!showReadingPreferences) {
@@ -619,7 +537,7 @@ export function ReaderPage({
 
   useEffect(() => {
     function saveCurrentProgress() {
-      queueCurrentProgress();
+      playbackSessionRef.current?.saveCurrentProgress();
     }
 
     function handleVisibilityChange() {
@@ -640,255 +558,14 @@ export function ReaderPage({
 
   useEffect(() => {
     return () => {
-      playbackGenerationRef.current += 1;
-      progressGenerationRef.current += 1;
-      const audio = audioRef.current;
-      if (audio) {
-        audio.pause();
-        audio.ontimeupdate = null;
-        audio.onended = null;
-        audio.onerror = null;
-        audio.removeAttribute("src");
-        audio.load();
-      }
-      audioPreparationRef.current = null;
-      audioElementCacheRef.current?.clear();
-      audioElementCacheRef.current = null;
       if (zenNoticeTimeoutRef.current !== null) {
         window.clearTimeout(zenNoticeTimeoutRef.current);
       }
     };
   }, []);
 
-  function updatePlaybackStatus(status: PlaybackStatus) {
-    playbackStatusRef.current = status;
-    setPlaybackStatus(status);
-  }
-
-  function updateCurrentPosition(
-    sentenceId: string,
-    offsetSeconds: number,
-    completed: boolean,
-    options: {
-      persist?: boolean | "throttled";
-      resumeFollowing?: boolean;
-      scrollBehavior?: ScrollBehavior;
-    } = {},
-  ) {
-    const sentenceChanged = currentSentenceIdRef.current !== sentenceId;
-    currentSentenceIdRef.current = sentenceId;
-    currentSentenceOffsetSecondsRef.current = offsetSeconds;
-    playbackCompletedRef.current = completed;
-    setCurrentSentenceId(sentenceId);
-    setCurrentSentenceOffsetSeconds(offsetSeconds);
-    setPlaybackCompleted(completed);
-    if (options.resumeFollowing) {
-      followCurrentRef.current = true;
-      setShowReturnToCurrent(false);
-    }
-    if (options.persist === "throttled") {
-      queueProgressThrottled({
-        sentence_id: sentenceId,
-        sentence_offset_seconds: offsetSeconds,
-        playback_rate: playbackRateRef.current,
-        playback_completed: completed,
-      });
-    } else if (options.persist !== false) {
-      queueProgress({
-        sentence_id: sentenceId,
-        sentence_offset_seconds: offsetSeconds,
-        playback_rate: playbackRateRef.current,
-        playback_completed: completed,
-      });
-    }
-    if (followCurrentRef.current && (sentenceChanged || options.resumeFollowing)) {
-      scheduleScrollToCurrent(options.scrollBehavior ?? "smooth");
-    }
-    if (sentenceChanged) {
-      scheduleAudioPreload(sentenceId);
-    }
-  }
-
-  function currentProgressInput() {
-    return progressInputForTimeline(
-      playbackTimeline,
-      currentSentenceIdRef.current,
-      currentSentenceOffsetSecondsRef.current,
-      playbackRateRef.current,
-      playbackCompletedRef.current,
-    );
-  }
-
-  function queueCurrentProgress() {
-    const progress = currentProgressInput();
-    if (!progress) {
-      return;
-    }
-    queueProgress(progress);
-  }
-
-  function scheduleAudioPreload(
-    anchorSentenceId: string | null,
-    sentenceIds = sentences.map((sentence) => sentence.id),
-  ) {
-    const queue = audioPreparationRef.current;
-    if (!queue) {
-      return;
-    }
-    void queue.preloadWindow(audioPreloadWindow(sentenceIds, anchorSentenceId));
-  }
-
-  function discardPlayback() {
-    playbackGenerationRef.current += 1;
-
-    const audio = audioRef.current;
-    audioRef.current = null;
-    if (audio) {
-      audio.pause();
-      audio.ontimeupdate = null;
-      audio.onended = null;
-      audio.onerror = null;
-      audio.removeAttribute("src");
-      audio.load();
-    }
-  }
-
-  function prepareNextBrowserAudio(sentenceId: string, generation: number) {
-    const queue = audioPreparationRef.current;
-    const cache = audioElementCacheRef.current;
-    if (!queue || !cache) {
-      return;
-    }
-    const currentIndex = sentences.findIndex((sentence) => sentence.id === sentenceId);
-    const nextSentence = sentences[currentIndex + 1];
-    if (!nextSentence || cache.has(nextSentence.id)) {
-      return;
-    }
-
-    void queue
-      .prepareForPlayback(nextSentence.id)
-      .then(() => {
-        if (
-          playbackGenerationRef.current !== generation ||
-          audioElementCacheRef.current !== cache
-        ) {
-          return;
-        }
-        cache.prepare(nextSentence.id, playbackRateRef.current);
-      })
-      .catch(() => {
-        // 后台浏览器预载失败时不打断当前朗读；真正播放该句时会重试。
-      });
-  }
-
-  function resetProgressSaving() {
-    progressGenerationRef.current += 1;
-    pendingProgressRef.current = null;
-    savingProgressRef.current = false;
-    progressBlockedRef.current = false;
-  }
-
-  function queueProgress(progress: ProgressInput) {
-    pendingProgressRef.current = progress;
-    progressBlockedRef.current = false;
-    lastProgressSaveAtRef.current = performance.now();
-    void flushProgress();
-  }
-
-  function queueProgressThrottled(progress: ProgressInput) {
-    const now = performance.now();
-    if (now - lastProgressSaveAtRef.current < PROGRESS_SAVE_INTERVAL_MS) {
-      pendingProgressRef.current = progress;
-      return;
-    }
-    queueProgress(progress);
-  }
-
-  async function flushProgress() {
-    if (savingProgressRef.current || progressBlockedRef.current) {
-      return;
-    }
-    const progress = pendingProgressRef.current;
-    const activeMaterialId = activeMaterialIdRef.current;
-    if (!progress || !activeMaterialId) {
-      return;
-    }
-
-    pendingProgressRef.current = null;
-    savingProgressRef.current = true;
-    const generation = progressGenerationRef.current;
-    try {
-      await saveProgress(activeMaterialId, progress);
-      if (progressGenerationRef.current === generation) {
-        setProgressError(null);
-      }
-    } catch {
-      if (progressGenerationRef.current === generation) {
-        pendingProgressRef.current ??= progress;
-        progressBlockedRef.current = true;
-        setProgressError("阅读进度保存失败，请重试。");
-      }
-    } finally {
-      if (progressGenerationRef.current === generation) {
-        savingProgressRef.current = false;
-        if (pendingProgressRef.current && !progressBlockedRef.current) {
-          void flushProgress();
-        }
-      }
-    }
-  }
-
   function retryProgressSave() {
-    progressBlockedRef.current = false;
-    void flushProgress();
-  }
-
-  function updateSentenceAudioDuration(sentenceId: string, durationSeconds: number) {
-    setMaterial((current) => {
-      if (!current) {
-        return current;
-      }
-      return {
-        ...current,
-        paragraphs: current.paragraphs.map((paragraph) => ({
-          ...paragraph,
-          sentences: paragraph.sentences.map((sentence) =>
-            sentence.id === sentenceId
-              ? { ...sentence, audio_duration_seconds: durationSeconds }
-              : sentence,
-          ),
-        })),
-      };
-    });
-    if (
-      currentSentenceIdRef.current === sentenceId &&
-      currentSentenceOffsetSecondsRef.current > durationSeconds
-    ) {
-      updateCurrentPosition(sentenceId, durationSeconds, playbackCompletedRef.current);
-      if (playbackStatusRef.current === "playing") {
-        handleSentenceEnded(sentenceId);
-      }
-    }
-  }
-
-  function resetMaterialAudioState() {
-    setMaterial((current) => {
-      if (!current) {
-        return current;
-      }
-      return {
-        ...current,
-        paragraphs: current.paragraphs.map((paragraph) => ({
-          ...paragraph,
-          sentences: paragraph.sentences.map((sentence) => ({
-            ...sentence,
-            audio_status: "pending",
-            audio_duration_seconds: null,
-            error_message: null,
-          })),
-        })),
-      };
-    });
+    playbackSessionRef.current?.retryProgressSave();
   }
 
   function visibleSentenceIdsWithinReaderChrome() {
@@ -906,225 +583,29 @@ export function ReaderPage({
   }
 
   async function handleRepairAudio() {
-    if (!materialId || audioRepairStatus === "repairing") {
-      return;
-    }
-    const repairMaterialId = materialId;
-    const shouldResume = playbackStatusRef.current === "playing";
-    const sentenceId = currentSentenceIdRef.current ?? sentences[0]?.id ?? null;
-    const offsetSeconds = currentSentenceOffsetSecondsRef.current;
-    const sentenceIds = sentences.map((sentence) => sentence.id);
-    const repairPreloadSentenceIds = audioRepairPreloadWindow(
-      sentenceIds,
-      sentenceId,
+    await playbackSessionRef.current?.repairAudio(
       visibleSentenceIdsWithinReaderChrome(),
     );
-
-    setAudioRepairStatus("repairing");
-    setPlaybackError(null);
-    discardPlayback();
-    audioPreparationRef.current?.clear();
-    audioElementCacheRef.current?.clear();
-    updatePlaybackStatus("paused");
-
-    try {
-      await clearMaterialAudioCache(repairMaterialId);
-      if (activeMaterialIdRef.current !== repairMaterialId) {
-        return;
-      }
-      audioReloadTokenRef.current = String(Date.now());
-      resetMaterialAudioState();
-      for (const preloadSentenceId of repairPreloadSentenceIds) {
-        if (activeMaterialIdRef.current !== repairMaterialId) {
-          return;
-        }
-        await audioPreparationRef.current?.prepareForPlayback(preloadSentenceId);
-      }
-      setAudioRepairStatus("success");
-      if (shouldResume && sentenceId) {
-        void playSentence(sentenceId, false, offsetSeconds);
-      } else {
-        scheduleAudioPreload(sentenceId);
-      }
-    } catch {
-      if (activeMaterialIdRef.current === repairMaterialId) {
-        setAudioRepairStatus("failed");
-      }
-    }
-  }
-
-  function selectSentence(sentenceId: string) {
-    discardPlayback();
-    setPlaybackError(null);
-    updatePlaybackStatus("paused");
-    updateCurrentPosition(sentenceId, 0, false, { resumeFollowing: true });
-  }
-
-  async function playSentence(sentenceId: string, restart = false, offsetSeconds = 0) {
-    if (!materialId) {
-      return;
-    }
-
-    setPlaybackError(null);
-    const activeAudio = audioRef.current;
-    if (activeAudio && currentSentenceIdRef.current === sentenceId) {
-      if (restart || activeAudio.ended) {
-        activeAudio.currentTime = 0;
-      } else if (offsetSeconds > 0) {
-        activeAudio.currentTime = offsetSeconds;
-      }
-      updateCurrentPosition(sentenceId, activeAudio.currentTime, false);
-      activeAudio.playbackRate = playbackRateRef.current;
-      try {
-        await activeAudio.play();
-        if (audioRef.current === activeAudio) {
-          updatePlaybackStatus("playing");
-        }
-      } catch {
-        if (audioRef.current === activeAudio) {
-          updatePlaybackStatus("paused");
-          setPlaybackError("无法播放当前句音频，请重试。");
-        }
-      }
-      return;
-    }
-
-    discardPlayback();
-    updateCurrentPosition(sentenceId, offsetSeconds, false);
-    updatePlaybackStatus("loading");
-    const generation = playbackGenerationRef.current;
-    try {
-      await audioPreparationRef.current?.prepareForPlayback(sentenceId);
-    } catch (reason: unknown) {
-      if (playbackGenerationRef.current !== generation) {
-        return;
-      }
-      updatePlaybackStatus("paused");
-      setPlaybackError(preparationErrorMessage(reason));
-      return;
-    }
-    if (playbackGenerationRef.current !== generation) {
-      return;
-    }
-    const audio =
-      audioElementCacheRef.current?.take(sentenceId, playbackRateRef.current) ??
-      new Audio(sentenceAudioUrl(materialId, sentenceId, audioReloadTokenRef.current));
-    audio.playbackRate = playbackRateRef.current;
-    if (offsetSeconds > 0) {
-      audio.currentTime = offsetSeconds;
-    }
-    audioRef.current = audio;
-    audio.ontimeupdate = () => {
-      if (audioRef.current !== audio) {
-        return;
-      }
-      updateCurrentPosition(sentenceId, audio.currentTime, false, {
-        persist: "throttled",
-      });
-    };
-    audio.onended = () => {
-      if (audioRef.current !== audio) {
-        return;
-      }
-      handleSentenceEnded(sentenceId);
-    };
-    audio.onerror = () => {
-      if (audioRef.current !== audio) {
-        return;
-      }
-      discardPlayback();
-      updatePlaybackStatus("paused");
-      setPlaybackError("无法播放当前句音频，请重试。");
-    };
-
-    try {
-      prepareNextBrowserAudio(sentenceId, generation);
-      await audio.play();
-      if (audioRef.current === audio) {
-        updatePlaybackStatus("playing");
-      }
-    } catch {
-      if (playbackGenerationRef.current !== generation) {
-        return;
-      }
-      discardPlayback();
-      updatePlaybackStatus("paused");
-      setPlaybackError("无法播放当前句音频，请重试。");
-    }
-  }
-
-  function handleSentenceEnded(sentenceId: string) {
-    const finishedIndex = sentences.findIndex((sentence) => sentence.id === sentenceId);
-    const nextSentence = sentences[finishedIndex + 1];
-    if (nextSentence) {
-      void playSentence(nextSentence.id, false, 0);
-      return;
-    }
-    const currentItem = playbackTimeline.items.find((item) => item.sentenceId === sentenceId);
-    updateCurrentPosition(sentenceId, currentItem?.durationSeconds ?? 0, true);
-    updatePlaybackStatus("paused");
-    if (!material) {
-      return;
-    }
-    const target = playbackModeTargetForNaturalEnd(
-      playbackModeRef.current,
-      materialPlaybackNavigation(material),
-    );
-    if (!target) {
-      return;
-    }
-    if (target.materialId === material.id) {
-      const firstSentenceId = sentences[0]?.id;
-      if (firstSentenceId) {
-        followCurrentRef.current = true;
-        void playSentence(firstSentenceId, false, 0);
-      }
-      return;
-    }
-    navigateToMaterial(target.materialId, { autoplay: target.autoplay });
   }
 
   function handlePlayPause() {
-    if (playbackStatusRef.current === "loading") {
-      return;
+    if (playbackSessionRef.current?.snapshot().playbackCompleted) {
+      followCurrentRef.current = true;
     }
-    if (playbackStatusRef.current === "playing") {
-      audioRef.current?.pause();
-      queueCurrentProgress();
-      updatePlaybackStatus("paused");
-      return;
-    }
-
-    const sentenceId = playbackCompletedRef.current
-      ? sentences[0]?.id
-      : (currentSentenceIdRef.current ?? sentences[0]?.id);
-    if (sentenceId) {
-      if (playbackCompletedRef.current) {
-        followCurrentRef.current = true;
-        if (sentenceId === currentSentenceIdRef.current) {
-          updateCurrentPosition(sentenceId, 0, false);
-        }
-      }
-      void playSentence(sentenceId, false, playbackCompletedRef.current ? 0 : currentSentenceOffsetSecondsRef.current);
-    }
+    void playbackSessionRef.current?.playPause();
   }
 
   function handleSentenceChange(sentenceId: string) {
     followCurrentRef.current = true;
-    if (
-      playbackStatusRef.current === "playing" ||
-      playbackStatusRef.current === "loading"
-    ) {
-      void playSentence(sentenceId);
-    } else {
-      selectSentence(sentenceId);
-    }
+    setShowReturnToCurrent(false);
+    void playbackSessionRef.current?.selectSentence(sentenceId);
   }
 
   function handleSentenceClick(sentenceId: string) {
-    if (sentenceId === currentSentenceIdRef.current && !playbackCompletedRef.current) {
-      if (playbackStatusRef.current === "playing") {
-        void playSentence(sentenceId, true);
+    const snapshot = playbackSessionRef.current?.snapshot();
+    if (sentenceId === snapshot?.currentSentenceId && !snapshot.playbackCompleted) {
+      if (snapshot.playbackStatus === "playing") {
+        void playbackSessionRef.current?.restartSentence(sentenceId);
       }
       return;
     }
@@ -1134,7 +615,7 @@ export function ReaderPage({
   function handleSentencePointer(sentenceId: string, clickCount: number) {
     if (sentencePointerAction(clickCount) === "play") {
       followCurrentRef.current = true;
-      void playSentence(sentenceId, true);
+      void playbackSessionRef.current?.restartSentence(sentenceId);
       return;
     }
     handleSentenceClick(sentenceId);
@@ -1148,7 +629,7 @@ export function ReaderPage({
       return;
     }
     event.preventDefault();
-    if (sentenceId === currentSentenceIdRef.current) {
+    if (sentenceId === playbackSessionRef.current?.snapshot().currentSentenceId) {
       handlePlayPause();
     } else {
       handleSentenceChange(sentenceId);
@@ -1156,37 +637,21 @@ export function ReaderPage({
   }
 
   function commitTimelineSeek(targetSeconds: number) {
-    const result = seekTimeline(playbackTimeline, targetSeconds);
     setPendingSeekSeconds(null);
-    if (!result) {
-      return;
-    }
     followCurrentRef.current = true;
-    setPlaybackError(null);
-    if (result.completed) {
-      discardPlayback();
-      updateCurrentPosition(result.sentenceId, result.offsetSeconds, true, {
-        resumeFollowing: true,
-      });
-      updatePlaybackStatus("paused");
-      return;
-    }
-    if (playbackStatusRef.current === "playing" || playbackStatusRef.current === "loading") {
-      void playSentence(result.sentenceId, false, result.offsetSeconds);
-      return;
-    }
-    discardPlayback();
-    updatePlaybackStatus("paused");
-    updateCurrentPosition(result.sentenceId, result.offsetSeconds, false, {
-      resumeFollowing: true,
+    setShowReturnToCurrent(false);
+    void playbackSessionRef.current?.seek(targetSeconds).then(() => {
+      scheduleScrollToCurrent("smooth");
     });
   }
 
   function handleTimelineSkip(deltaSeconds: number) {
-    const baseSeconds = playbackCompletedRef.current
-      ? playbackTimeline.totalSeconds
-      : playbackTimeline.elapsedSeconds;
-    commitTimelineSeek(baseSeconds + deltaSeconds);
+    setPendingSeekSeconds(null);
+    followCurrentRef.current = true;
+    setShowReturnToCurrent(false);
+    void playbackSessionRef.current?.skip(deltaSeconds).then(() => {
+      scheduleScrollToCurrent("smooth");
+    });
   }
 
   function handleTimelinePreview(value: number) {
@@ -1197,49 +662,13 @@ export function ReaderPage({
     commitTimelineSeek(Number(event.currentTarget.value));
   }
 
-  function navigateToMaterial(
-    targetMaterialId: string,
-    options: { autoplay?: boolean } = {},
-  ) {
-    if (!targetMaterialId || targetMaterialId === materialId) {
-      return;
-    }
-    if (zenModeRef.current) {
-      void exitZenMode({ returnFocus: false });
-    }
-    queueCurrentProgress();
-    autoplayOnMaterialLoadRef.current =
-      options.autoplay ??
-      (playbackStatusRef.current === "playing" || playbackStatusRef.current === "loading");
-    navigate(`/materials/${targetMaterialId}`);
-  }
-
-  function handlePlaybackRateChange(rate: number) {
-    playbackRateRef.current = rate;
-    setPlaybackRate(rate);
-    if (audioRef.current) {
-      audioRef.current.playbackRate = rate;
-    }
-    audioElementCacheRef.current?.syncPlaybackRate(rate);
-
-    const sentenceId = currentSentenceIdRef.current ?? sentences[0]?.id;
-    if (sentenceId) {
-      updateCurrentPosition(sentenceId, currentSentenceOffsetSecondsRef.current, playbackCompletedRef.current, {
-        resumeFollowing: currentSentenceIdRef.current === null,
-      });
-      if (currentSentenceIdRef.current === sentenceId && playbackStatusRef.current === "idle") {
-        updatePlaybackStatus("paused");
-      }
-    }
-  }
-
   function handlePlaybackRateMenuToggle() {
     setShowPlaybackModeMenu(false);
     setShowPlaybackRateMenu((current) => !current);
   }
 
   function selectPlaybackRate(rate: number) {
-    handlePlaybackRateChange(rate);
+    playbackSessionRef.current?.setPlaybackRate(rate);
     setShowPlaybackRateMenu(false);
     playbackRateTriggerRef.current?.focus();
   }
@@ -1250,17 +679,13 @@ export function ReaderPage({
   }
 
   function selectPlaybackMode(mode: PlaybackMode) {
-    playbackModeRef.current = mode;
-    setPlaybackMode(mode);
-    setPlaybackModeError(
-      savePlaybackModePreference(mode) ? null : "播放模式已切换，但无法保存到浏览器。",
-    );
+    playbackSessionRef.current?.setPlaybackMode(mode);
     setShowPlaybackModeMenu(false);
     playbackModeTriggerRef.current?.focus();
   }
 
   function sentenceElement() {
-    const sentenceId = currentSentenceIdRef.current;
+    const sentenceId = playbackSessionRef.current?.snapshot().currentSentenceId;
     return sentenceId ? document.getElementById(sentenceId) : null;
   }
 
@@ -1310,7 +735,8 @@ export function ReaderPage({
 
   function updateReturnToCurrent() {
     setShowReturnToCurrent(
-      currentSentenceIdRef.current !== null && !isCurrentSentenceFullyVisible(),
+      playbackSessionRef.current?.snapshot().currentSentenceId != null &&
+        !isCurrentSentenceFullyVisible(),
     );
   }
 
@@ -1798,7 +1224,7 @@ export function ReaderPage({
                 ) : null}
                 <div className="player-transport-slim">
                   {previousPlaybackTarget ? (
-                    <button className="icon-button player-icon-button" type="button" aria-label="上一篇" title="上一篇" onClick={() => navigateToMaterial(previousPlaybackTarget.materialId, { autoplay: previousPlaybackTarget.autoplay })}>
+                    <button className="icon-button player-icon-button" type="button" aria-label="上一篇" title="上一篇" onClick={() => playbackSessionRef.current?.navigatePrevious()}>
                       <ChevronLeft aria-hidden="true" />
                     </button>
                   ) : null}
@@ -1812,7 +1238,7 @@ export function ReaderPage({
                     <FastForward aria-hidden="true" />
                   </button>
                   {nextPlaybackTarget ? (
-                    <button className="icon-button player-icon-button" type="button" aria-label="下一篇" title="下一篇" onClick={() => navigateToMaterial(nextPlaybackTarget.materialId, { autoplay: nextPlaybackTarget.autoplay })}>
+                    <button className="icon-button player-icon-button" type="button" aria-label="下一篇" title="下一篇" onClick={() => playbackSessionRef.current?.navigateNext()}>
                       <ChevronRight aria-hidden="true" />
                     </button>
                   ) : null}
