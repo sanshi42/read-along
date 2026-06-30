@@ -16,5 +16,7 @@ htmlcov/
 !.env.example
 web/node_modules/
 web/dist/
+web/test-results/
+web/playwright-report/
 *.tsbuildinfo
 docs/ideas.md

@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
+    "format": "biome format --write smoke biome.json package.json tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts",
+    "format:check": "biome format smoke biome.json package.json tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts",
+    "lint": "biome lint --skip=a11y .",
     "test": "node --test --experimental-strip-types test/*.test.ts",
+    "test:smoke": "playwright test --config smoke/playwright.config.ts",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
@@ -16,6 +20,8 @@
     "react-router-dom": "^7.9.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.1",
+    "@playwright/test": "1.61.1",
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.3",
