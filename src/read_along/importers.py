@@ -104,9 +104,10 @@ def import_url(
         raise UrlImportError(f'不支持的网页导入模式：{mode}。')
 
     paragraphs = _draft_paragraphs(page.text, source_uri=page.url)
+    if not paragraphs and normalized_mode == 'auto' and dedao.supports_url(url):
+        page = fetch_chrome_page(url)
+        paragraphs = _draft_paragraphs(page.text, source_uri=page.url)
     if not paragraphs:
-        if normalized_mode == 'auto' and dedao.supports_url(page.url):
-            raise UrlImportError('得到页面 URL 直抓未返回正文，可能需要登录态或动态渲染。')
         raise UrlImportError('网页正文为空或无法抽取。')
 
     return library.save(
@@ -164,9 +165,7 @@ def fetch_webpage(url: str) -> WebPageContent:
         raise UrlImportError(f'网页无法访问（HTTP {status}）。')
 
     text = _extract_main_text(page)
-    if not text:
-        if dedao.supports_url(url):
-            raise UrlImportError('得到页面 URL 直抓未返回正文，可能需要登录态或动态渲染。')
+    if not text and not dedao.supports_url(url):
         raise UrlImportError('网页正文为空或无法抽取。')
 
     return WebPageContent(

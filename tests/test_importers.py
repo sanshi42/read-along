@@ -350,12 +350,65 @@ class TestImportUrl:
         assert '得到单篇的正文内容' in all_text
         assert '第二段正文' in all_text
 
-    def test_empty_dedao_body_returns_specific_error(
+    def test_empty_dedao_spa_shell_falls_back_to_chrome(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """得到 URL 直抓无正文时应说明登录态或动态渲染边界。"""
+        """直抓只拿到空页面壳时，应从 Chrome 提取正文完成导入。"""
+        from scrapling.fetchers import Fetcher
+        from scrapling.parser import Adaptor
+
+        target_url = 'https://www.dedao.cn/course/article?id=0kzlWERBr6meVb1oAZK2j7LD4Od3Zp'
+        library = _library(tmp_path)
+        fetched_urls: list[str] = []
+        chrome_urls: list[str] = []
+
+        def fake_get(url: str, *, stealthy_headers: bool, timeout: int) -> Adaptor:
+            assert stealthy_headers is True
+            assert timeout == 15
+            fetched_urls.append(url)
+            page = Adaptor(
+                '<html><head><script>window.__APP__ = {}</script></head>'
+                '<body><div id="app"></div><script src="/app.js"></script></body></html>',
+                url=url,
+            )
+            setattr(page, 'status', 200)
+            return page
+
+        def fake_extract_chrome_url_text(
+            url: str,
+            *,
+            preferred_selectors: tuple[str, ...] = (),
+            preferred_title_selectors: tuple[str, ...] = (),
+        ) -> BrowserPageText:
+            chrome_urls.append(url)
+            assert preferred_selectors == ('.article-body',)
+            assert preferred_title_selectors == ('.article-title',)
+            return BrowserPageText(
+                title='得到课程单篇',
+                url=url,
+                selector='.article-body',
+                text='第一段正文解释核心概念。第二句继续说明。',
+            )
+
+        monkeypatch.setattr(Fetcher, 'get', fake_get)
+        monkeypatch.setattr('read_along.importers.extract_chrome_url_text', fake_extract_chrome_url_text)
+
+        result = import_url(url=target_url, library=library)
+
+        assert fetched_urls == [target_url]
+        assert chrome_urls == [target_url]
+        assert result.material.title == '得到课程单篇'
+        assert result.material.primary_source.source_uri == target_url
+        assert result.material.paragraphs[0].sentences[0].text == '第一段正文解释核心概念。'
+
+    def test_empty_dedao_body_reports_chrome_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """直抓无正文且 Chrome 读取失败时应返回网页导入错误。"""
         target_url = 'https://www.dedao.cn/course/article?id=obyrmnqGdwxkXWMa0VelBz2D5ZO8aN'
         library = _library(tmp_path)
 
@@ -364,7 +417,18 @@ class TestImportUrl:
             lambda url: WebPageContent(title='得到', url=target_url, text=''),
         )
 
-        with pytest.raises(UrlImportError, match='登录态或动态渲染'):
+        def fail_extract_chrome_url_text(
+            url: str,
+            *,
+            preferred_selectors: tuple[str, ...] = (),
+            preferred_title_selectors: tuple[str, ...] = (),
+        ) -> BrowserPageText:
+            assert url == target_url
+            raise BrowserExtractionError('无法在 Chrome 中读取目标 URL。')
+
+        monkeypatch.setattr('read_along.importers.extract_chrome_url_text', fail_extract_chrome_url_text)
+
+        with pytest.raises(UrlImportError, match='Chrome 页面读取失败'):
             import_url(
                 url=target_url,
                 library=library,
