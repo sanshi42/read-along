@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import wave
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 
 import pytest
@@ -528,6 +529,177 @@ def test_clear_material_audio_cache_removes_files_and_resets_sentence_state(
     assert [sentence.error_message for sentence in reopened_sentences] == [None, None]
 
 
+def test_clear_waits_for_generation_then_removes_its_audio(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, paths = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('清理中的朗读。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    audio_path = expected_audio_path(paths, material.material.id, sentence.id)
+    generation_started = threading.Event()
+    finish_generation = threading.Event()
+    clearing_started = threading.Event()
+
+    def generate(text: str, output_path: Path) -> Path:
+        write_wav(output_path)
+        generation_started.set()
+        assert finish_generation.wait(timeout=2)
+        return output_path
+
+    monkeypatch.setattr(library.tts, 'generate', generate)
+
+    def clear() -> None:
+        clearing_started.set()
+        library.clear_material_audio_cache(material.material.id)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        generating = executor.submit(library.get_or_generate_audio, material.material.id, sentence.id)
+        assert generation_started.wait(timeout=2)
+        clearing = executor.submit(clear)
+        try:
+            assert clearing_started.wait(timeout=2)
+            with pytest.raises(FutureTimeoutError):
+                clearing.result(timeout=0.1)
+        finally:
+            finish_generation.set()
+        generating.result(timeout=2)
+        clearing.result(timeout=2)
+
+    reopened_sentence = library.get(material.material.id).paragraphs[0].sentences[0]
+    assert reopened_sentence.audio_status is AudioStatus.PENDING
+    assert reopened_sentence.audio_path is None
+    assert not audio_path.exists()
+
+
+def test_clear_waits_for_audio_lease_until_it_is_closed(tmp_path: Path) -> None:
+    library, paths = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('传输中的朗读。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    lease = library.acquire_sentence_audio(material.material.id, sentence.id)
+    audio_path = expected_audio_path(paths, material.material.id, sentence.id)
+    clearing_started = threading.Event()
+    assert lease.audio.path == audio_path
+    assert audio_path.is_file()
+
+    def clear() -> None:
+        clearing_started.set()
+        library.clear_material_audio_cache(material.material.id)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        clearing = executor.submit(clear)
+        try:
+            assert clearing_started.wait(timeout=2)
+            with pytest.raises(FutureTimeoutError):
+                clearing.result(timeout=0.1)
+            assert audio_path.is_file()
+        finally:
+            lease.close()
+            lease.close()
+        clearing.result(timeout=2)
+
+    assert not audio_path.exists()
+    assert library.get(material.material.id).paragraphs[0].sentences[0].audio_status is AudioStatus.PENDING
+
+
+def test_waiting_clear_precedes_later_audio_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, _ = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('清理排队时的新读取。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    lease = library.acquire_sentence_audio(material.material.id, sentence.id)
+    fake_tts = library.tts
+    assert isinstance(fake_tts, FakeTTSBackend)
+
+    gate = library.audio._material_gate(material.material.id)
+    original_wait = gate._condition.wait
+    writer_waiting = threading.Event()
+    reader_waiting = threading.Event()
+    reader_ident: int | None = None
+
+    def observe_wait(timeout: float | None = None) -> bool:
+        if gate._waiting_writers:
+            if threading.get_ident() == reader_ident:
+                reader_waiting.set()
+            else:
+                writer_waiting.set()
+        return original_wait(timeout)
+
+    def later_read() -> None:
+        nonlocal reader_ident
+        reader_ident = threading.get_ident()
+        library.get_or_generate_audio(material.material.id, sentence.id)
+
+    monkeypatch.setattr(gate._condition, 'wait', observe_wait)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        clearing = executor.submit(library.clear_material_audio_cache, material.material.id)
+        try:
+            assert writer_waiting.wait(timeout=2)
+            reading = executor.submit(later_read)
+            assert reader_waiting.wait(timeout=2)
+        finally:
+            lease.close()
+        clearing.result(timeout=2)
+        reading.result(timeout=2)
+
+    assert len(fake_tts.calls) == 2
+    assert library.get(material.material.id).paragraphs[0].sentences[0].audio_status is AudioStatus.READY
+
+
+def test_clear_reports_directory_removal_failure_without_resetting_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, paths = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('无法清理。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    audio = library.get_or_generate_audio(material.material.id, sentence.id)
+
+    def refuse_remove(path: Path, *, ignore_errors: bool = False) -> None:
+        if not ignore_errors:
+            raise OSError('无法删除缓存目录')
+
+    monkeypatch.setattr('read_along.material_audio.shutil.rmtree', refuse_remove)
+
+    with pytest.raises(AudioGenerationError, match=r'^无法清理句子音频缓存。$'):
+        library.clear_material_audio_cache(material.material.id)
+
+    assert audio.path == expected_audio_path(paths, material.material.id, sentence.id)
+    assert audio.path.is_file()
+    assert library.get(material.material.id).paragraphs[0].sentences[0].audio_status is AudioStatus.READY
+
+
+def test_failed_audio_acquisition_releases_material_for_clear(tmp_path: Path) -> None:
+    library, _ = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('生成失败后清理。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    fake_tts = library.tts
+    assert isinstance(fake_tts, FakeTTSBackend)
+    fake_tts.fail_once = True
+
+    with pytest.raises(AudioGenerationError):
+        library.acquire_sentence_audio(material.material.id, sentence.id)
+
+    finished = threading.Event()
+    errors: list[Exception] = []
+
+    def clear() -> None:
+        try:
+            library.clear_material_audio_cache(material.material.id)
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    threading.Thread(target=clear, daemon=True).start()
+    assert finished.wait(timeout=2)
+    assert errors == []
+    assert library.get(material.material.id).paragraphs[0].sentences[0].audio_status is AudioStatus.PENDING
+
+
 def test_get_or_generate_audio_repairs_state_when_cache_exists(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -882,3 +1054,76 @@ def test_delete_is_idempotent_and_cleans_owned_files(tmp_path: Path) -> None:
         library.get(material.material.id)
     assert not source_path.exists()
     assert not audio_dir.exists()
+
+
+def test_delete_waits_for_audio_lease_then_removes_material(tmp_path: Path) -> None:
+    library, paths = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('删除中的朗读。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    lease = library.acquire_sentence_audio(material.material.id, sentence.id)
+    audio_path = expected_audio_path(paths, material.material.id, sentence.id)
+    deleting_started = threading.Event()
+
+    def delete() -> None:
+        deleting_started.set()
+        library.delete(material.material.id)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        deleting = executor.submit(delete)
+        try:
+            assert deleting_started.wait(timeout=2)
+            with pytest.raises(FutureTimeoutError):
+                deleting.result(timeout=0.1)
+            assert audio_path.is_file()
+            assert library.get(material.material.id).id == material.material.id
+        finally:
+            lease.close()
+        deleting.result(timeout=2)
+
+    with pytest.raises(MaterialNotFoundError):
+        library.get(material.material.id)
+    assert not audio_path.exists()
+
+
+def test_delete_waits_for_generation_then_removes_its_audio(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, paths = material_library(tmp_path)
+    material = library.save(url_draft(sentences=('生成中删除。',)))
+    sentence = material.material.paragraphs[0].sentences[0]
+    audio_path = expected_audio_path(paths, material.material.id, sentence.id)
+    generation_started = threading.Event()
+    finish_generation = threading.Event()
+    deleting_started = threading.Event()
+
+    def generate(text: str, output_path: Path) -> Path:
+        write_wav(output_path)
+        generation_started.set()
+        assert finish_generation.wait(timeout=2)
+        return output_path
+
+    def delete() -> None:
+        deleting_started.set()
+        library.delete(material.material.id)
+
+    monkeypatch.setattr(library.tts, 'generate', generate)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        generating = executor.submit(library.get_or_generate_audio, material.material.id, sentence.id)
+        assert generation_started.wait(timeout=2)
+        deleting = executor.submit(delete)
+        try:
+            assert deleting_started.wait(timeout=2)
+            with pytest.raises(FutureTimeoutError):
+                deleting.result(timeout=0.5)
+            assert audio_path.is_file()
+            assert library.get(material.material.id).id == material.material.id
+        finally:
+            finish_generation.set()
+        generating.result(timeout=2)
+        deleting.result(timeout=2)
+
+    with pytest.raises(MaterialNotFoundError):
+        library.get(material.material.id)
+    assert not audio_path.exists()

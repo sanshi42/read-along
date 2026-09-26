@@ -17,7 +17,7 @@ from read_along.ids import (
     generate_sentence_id,
     generate_source_id,
 )
-from read_along.material_audio import MaterialAudioCache
+from read_along.material_audio import AudioLease, MaterialAudioCache
 from read_along.material_errors import (
     AudioGenerationError,
     AudioNotFoundError,
@@ -44,6 +44,7 @@ from read_along.tts import CachedAudio, TTSBackend, create_default_tts_backend
 
 __all__ = [
     'AudioGenerationError',
+    'AudioLease',
     'AudioNotFoundError',
     'InvalidDraftError',
     'InvalidProgressError',
@@ -300,37 +301,42 @@ class MaterialLibrary:
         """返回句子缓存音频，缺失时同步生成。"""
         return self.audio.get_or_generate_audio(material_id, sentence_id)
 
+    def acquire_sentence_audio(self, material_id: str, sentence_id: str) -> AudioLease:
+        """取得句子音频读取租约，调用方在读取完成后释放。"""
+        return self.audio.acquire_sentence_audio(material_id, sentence_id)
+
     def clear_material_audio_cache(self, material_id: str) -> None:
         """清理指定阅读材料的句子音频缓存，并重置句子音频状态。"""
         self.audio.clear_material_audio_cache(material_id)
 
     def delete(self, material_id: str) -> None:
         """幂等删除阅读材料及关联本地缓存。"""
-        source_paths: list[Path] = []
-        with closing(self.repository.connect()) as connection:
-            try:
-                connection.execute('BEGIN IMMEDIATE')
-                material = self.repository.get_material(connection, material_id)
-                if material is None:
+        with self.audio.material_write(material_id):
+            source_paths: list[Path] = []
+            with closing(self.repository.connect()) as connection:
+                try:
+                    connection.execute('BEGIN IMMEDIATE')
+                    material = self.repository.get_material(connection, material_id)
+                    if material is None:
+                        connection.rollback()
+                        return
+                    source_paths = [
+                        Path(source.source_path)
+                        for source in self.repository.list_sources(connection, material_id)
+                        if source.source_path is not None
+                    ]
+                    self.repository.delete_material(connection, material_id)
+                    connection.commit()
+                except sqlite3.Error as exc:
                     connection.rollback()
-                    return
-                source_paths = [
-                    Path(source.source_path)
-                    for source in self.repository.list_sources(connection, material_id)
-                    if source.source_path is not None
-                ]
-                self.repository.delete_material(connection, material_id)
-                connection.commit()
-            except sqlite3.Error as exc:
-                connection.rollback()
-                raise MaterialLibraryError('删除阅读材料失败') from exc
+                    raise MaterialLibraryError('删除阅读材料失败') from exc
 
-        for source_path in source_paths:
-            try:
-                source_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-        shutil.rmtree(self.storage_paths.audio / material_id, ignore_errors=True)
+            for source_path in source_paths:
+                try:
+                    source_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            shutil.rmtree(self.storage_paths.audio / material_id, ignore_errors=True)
 
     def _validate_draft(self, draft: ReadingMaterialDraft) -> None:
         if not draft.title.strip():

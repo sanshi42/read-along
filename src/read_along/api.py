@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from anyio import CapacityLimiter
+from anyio.to_thread import run_sync
 from fastapi import Depends, FastAPI, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+from starlette.types import Receive, Scope, Send
 
 from read_along import __version__
 from read_along.config import AppConfig, load_config
@@ -24,6 +28,9 @@ from read_along.material_library import (
 from read_along.models import MaterialDetailResponse, MaterialImportResponse
 from read_along.storage import StoragePaths
 from read_along.tts.base import TTSBackend
+
+if TYPE_CHECKING:
+    from read_along.material_audio import AudioLease
 
 
 class UrlImportRequest(BaseModel):
@@ -52,6 +59,63 @@ class AppState:
     ) -> None:
         self.storage_paths = storage_paths
         self.material_library = material_library
+
+
+class _LeasedAudioResponse(FileResponse):
+    def __init__(self, lease: AudioLease) -> None:
+        self.lease = lease
+        audio = lease.audio
+        super().__init__(
+            audio.path,
+            media_type=audio.media_type,
+            headers={
+                'Cache-Control': 'private, no-cache',
+                'X-Read-Along-Audio-Duration-Seconds': f'{audio.duration_seconds:g}',
+            },
+        )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            if 'http.response.pathsend' in scope.get('extensions', {}):
+                scope = {
+                    **scope,
+                    'extensions': {
+                        name: value for name, value in scope['extensions'].items() if name != 'http.response.pathsend'
+                    },
+                }
+            await super().__call__(scope, receive, send)
+        finally:
+            self.lease.close()
+
+
+def _close_abandoned_audio_lease(worker: asyncio.Task[AudioLease]) -> None:
+    if worker.cancelled():
+        return
+    try:
+        worker.result().close()
+    except Exception:
+        pass
+
+
+async def _acquire_sentence_audio(
+    library: MaterialLibrary,
+    material_id: str,
+    sentence_id: str,
+    limiter: CapacityLimiter,
+) -> AudioLease:
+    worker = asyncio.create_task(
+        run_sync(
+            library.acquire_sentence_audio,
+            material_id,
+            sentence_id,
+            limiter=limiter,
+        )
+    )
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        worker.add_done_callback(_close_abandoned_audio_lease)
+        raise
 
 
 # 应用使用前由 cli.py 设置的全局状态
@@ -87,6 +151,7 @@ def get_material_library() -> MaterialLibrary:
 
 def create_app() -> FastAPI:
     """创建 Read Along FastAPI 应用。"""
+    audio_limiter = CapacityLimiter(40)
     app = FastAPI(
         title='Read Along API',
         version=__version__,
@@ -121,22 +186,22 @@ def create_app() -> FastAPI:
             )
 
     @app.delete('/api/materials/{material_id}', status_code=204)
-    def delete_material(
+    async def delete_material(
         material_id: str,
         *,
         library: MaterialLibrary = Depends(get_material_library),
     ) -> Response:
-        library.delete(material_id)
+        await run_sync(library.delete, material_id, limiter=audio_limiter)
         return Response(status_code=204)
 
     @app.delete('/api/materials/{material_id}/audio-cache', status_code=204)
-    def clear_material_audio_cache(
+    async def clear_material_audio_cache(
         material_id: str,
         *,
         library: MaterialLibrary = Depends(get_material_library),
     ) -> Response:
         try:
-            library.clear_material_audio_cache(material_id)
+            await run_sync(library.clear_material_audio_cache, material_id, limiter=audio_limiter)
             return Response(status_code=204)
         except MaterialNotFoundError as exc:
             return JSONResponse(
@@ -150,14 +215,14 @@ def create_app() -> FastAPI:
             )
 
     @app.get('/api/materials/{material_id}/sentences/{sentence_id}/audio')
-    def get_sentence_audio(
+    async def get_sentence_audio(
         material_id: str,
         sentence_id: str,
         *,
         library: MaterialLibrary = Depends(get_material_library),
     ) -> Any:
         try:
-            audio = library.get_or_generate_audio(material_id, sentence_id)
+            lease = await _acquire_sentence_audio(library, material_id, sentence_id, audio_limiter)
         except AudioNotFoundError as exc:
             return JSONResponse(
                 status_code=404,
@@ -168,13 +233,11 @@ def create_app() -> FastAPI:
                 status_code=503,
                 content={'detail': str(exc)},
             )
-        headers = {'Cache-Control': 'private, no-cache'}
-        headers['X-Read-Along-Audio-Duration-Seconds'] = f'{audio.duration_seconds:g}'
-        return FileResponse(
-            audio.path,
-            media_type=audio.media_type,
-            headers=headers,
-        )
+        try:
+            return _LeasedAudioResponse(lease)
+        except BaseException:
+            lease.close()
+            raise
 
     @app.put('/api/materials/{material_id}/progress')
     def save_progress(

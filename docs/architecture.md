@@ -48,6 +48,8 @@ flowchart LR
 
 `Repository` 只负责 SQLite 读写。它不承担领域决策，例如重复导入如何处理、音频缓存如何校验、阅读材料详情如何装配。
 
+句子音频的生成与文件生命周期由 `MaterialAudioCache` 协调。同一句生成去重，不同句可以并发生成；HTTP 通过 `MaterialLibrary.acquire_sentence_audio()` 取得读取租约，并在音频响应发送结束后释放。清理缓存和删除材料会等待已有生成与响应完成，清理成功后才重置句子音频状态。这项协调只覆盖同一应用实例内的并发，不覆盖多个进程共享数据目录。
+
 ## 朗读运行边界
 
 Read Along 只使用本地 Sherpa ONNX 朗读引擎。用户通过 `READ_ALONG_TTS_MODEL` 选择代码内置且经过验证的模型 profile；profile 封装下载来源、文件布局和运行类型，用户不直接配置模型文件路径。当前唯一登记的 profile 是 `kokoro-multi-lang-v1_1-int8`，未知 profile 会导致启动失败。

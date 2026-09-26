@@ -8,7 +8,8 @@ import shutil
 import sqlite3
 import threading
 import wave
-from contextlib import closing
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, closing, contextmanager
 from pathlib import Path
 
 from read_along.material_errors import AudioGenerationError, AudioNotFoundError, MaterialNotFoundError
@@ -116,6 +117,61 @@ def _tts_cache_fingerprint(text: str, tts: TTSBackend) -> str:
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
+class _MaterialAudioGate:
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._readers = 0
+        self._waiting_writers = 0
+        self._writing = False
+
+    def acquire_read(self) -> None:
+        with self._condition:
+            while self._writing or self._waiting_writers:
+                self._condition.wait()
+            self._readers += 1
+
+    def release_read(self) -> None:
+        with self._condition:
+            self._readers -= 1
+            if self._readers == 0:
+                self._condition.notify_all()
+
+    @contextmanager
+    def write(self) -> Iterator[None]:
+        with self._condition:
+            self._waiting_writers += 1
+            try:
+                while self._writing or self._readers:
+                    self._condition.wait()
+                self._writing = True
+            finally:
+                self._waiting_writers -= 1
+                self._condition.notify_all()
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._writing = False
+                self._condition.notify_all()
+
+
+class AudioLease:
+    """保持句子音频可读，直到调用方完成读取。"""
+
+    def __init__(self, audio: CachedAudio, gate: _MaterialAudioGate) -> None:
+        self.audio = audio
+        self._gate = gate
+        self._close_lock = threading.Lock()
+        self._closed = False
+
+    def close(self) -> None:
+        """释放音频读取占用；重复调用不产生影响。"""
+        with self._close_lock:
+            if not self._closed:
+                self._closed = True
+                self._gate.release_read()
+
+
 class MaterialAudioCache:
     """管理阅读材料句子音频缓存。"""
 
@@ -125,14 +181,38 @@ class MaterialAudioCache:
         self.tts = tts
         self._locks_guard = threading.Lock()
         self._locks: dict[tuple[str, str], threading.Lock] = {}
+        self._material_gates: dict[str, _MaterialAudioGate] = {}
 
     def get_or_generate_audio(self, material_id: str, sentence_id: str) -> CachedAudio:
         """返回句子缓存音频，缺失时同步生成。"""
-        with self._audio_lock(material_id, sentence_id):
-            return self._get_or_generate_audio_locked(material_id, sentence_id)
+        lease = self.acquire_sentence_audio(material_id, sentence_id)
+        try:
+            return lease.audio
+        finally:
+            lease.close()
+
+    def acquire_sentence_audio(self, material_id: str, sentence_id: str) -> AudioLease:
+        """取得句子音频，并在调用方释放前保留其文件。"""
+        gate = self._material_gate(material_id)
+        gate.acquire_read()
+        try:
+            with self._audio_lock(material_id, sentence_id):
+                audio = self._get_or_generate_audio_locked(material_id, sentence_id)
+        except BaseException:
+            gate.release_read()
+            raise
+        return AudioLease(audio, gate)
+
+    def material_write(self, material_id: str) -> AbstractContextManager[None]:
+        """等待已有音频读取完成，再独占该阅读材料的音频生命周期。"""
+        return self._material_gate(material_id).write()
 
     def clear_material_audio_cache(self, material_id: str) -> None:
         """清理指定阅读材料的句子音频缓存，并重置句子音频状态。"""
+        with self.material_write(material_id):
+            self._clear_material_audio_cache_exclusive(material_id)
+
+    def _clear_material_audio_cache_exclusive(self, material_id: str) -> None:
         try:
             with closing(self.repository.connect()) as connection:
                 if self.repository.get_material(connection, material_id) is None:
@@ -145,8 +225,8 @@ class MaterialAudioCache:
         try:
             if audio_dir.is_symlink() or audio_dir.is_file():
                 audio_dir.unlink()
-            else:
-                shutil.rmtree(audio_dir, ignore_errors=True)
+            elif audio_dir.exists():
+                shutil.rmtree(audio_dir)
         except OSError as exc:
             raise AudioGenerationError('无法清理句子音频缓存。') from exc
 
@@ -330,6 +410,10 @@ class MaterialAudioCache:
         key = (material_id, sentence_id)
         with self._locks_guard:
             return self._locks.setdefault(key, threading.Lock())
+
+    def _material_gate(self, material_id: str) -> _MaterialAudioGate:
+        with self._locks_guard:
+            return self._material_gates.setdefault(material_id, _MaterialAudioGate())
 
     def _update_audio_state(
         self,
