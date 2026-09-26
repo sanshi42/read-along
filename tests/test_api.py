@@ -51,6 +51,11 @@ def test_app_dependencies_initialize_state_when_reload_worker_imports_app(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv('READ_ALONG_HOME', str(tmp_path / 'data'))
+    monkeypatch.setenv('READ_ALONG_TTS_MODEL', 'kokoro-multi-lang-v1_1-int8')
+    monkeypatch.setenv('READ_ALONG_TTS_VOICE_ID', '3')
+    monkeypatch.setenv('READ_ALONG_TTS_PROVIDER', 'cpu')
+    monkeypatch.setenv('READ_ALONG_TTS_NUM_THREADS', '2')
+    monkeypatch.setenv('READ_ALONG_TTS_SPEED', '1.0')
     monkeypatch.setattr(api, '_state', None)
     client = TestClient(create_app())
 

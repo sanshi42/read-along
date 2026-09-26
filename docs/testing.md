@@ -40,7 +40,7 @@ make check-browser
 
 烟测会：
 
-1. 使用临时 `READ_ALONG_HOME` 启动 FastAPI。
+1. 使用根目录 `.env` 和临时 `READ_ALONG_HOME`，通过 Uvicorn 直接启动 FastAPI；这条测试专用路径不会准备或下载 TTS 模型。
 2. 启动 Vite 开发服务器。
 3. 通过 Playwright Chromium 访问真实页面。
 4. 验证 `/api/health` 代理、空书架页面和未知路由 404。
@@ -51,7 +51,7 @@ make check-browser
 npx --prefix web playwright install chromium
 ```
 
-CI 会自动安装 Chromium，并在 Python 和 Web job 通过后运行 smoke job。
+CI 会先把 `.env.example` 复制为根目录 `.env`，再自动安装 Chromium，并在 Python 和 Web job 通过后运行 smoke job。这项烟测只覆盖健康检查和页面/API 集成，不替代生产启动时的模型准备检查。
 
 ## 静态检查
 

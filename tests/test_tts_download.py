@@ -63,12 +63,13 @@ class RecordingProgress:
 def make_kokoro_archive(
     tmp_path: Path,
     *,
+    empty_model: bool = False,
     missing_tokens: bool = False,
     missing_zh_lexicon: bool = False,
 ) -> Path:
     root = tmp_path / 'kokoro-int8-multi-lang-v1_1'
     root.mkdir()
-    (root / 'model.int8.onnx').write_bytes(b'model')
+    (root / 'model.int8.onnx').write_bytes(b'' if empty_model else b'model')
     (root / 'voices.bin').write_bytes(b'voices')
     if not missing_tokens:
         (root / 'tokens.txt').write_text('tokens', encoding='utf-8')
@@ -83,7 +84,7 @@ def make_kokoro_archive(
     return archive
 
 
-def test_download_kokoro_model_extracts_int8_release_archive_and_reports_env(tmp_path: Path) -> None:
+def test_download_kokoro_model_extracts_int8_release_archive(tmp_path: Path) -> None:
     archive = make_kokoro_archive(tmp_path)
     target = tmp_path / 'models' / 'tts'
 
@@ -96,11 +97,6 @@ def test_download_kokoro_model_extracts_int8_release_archive_and_reports_env(tmp
     assert result.data_dir == result.model_dir / 'espeak-ng-data'
     assert result.lexicon_us_en_path == result.model_dir / 'lexicon-us-en.txt'
     assert result.lexicon_zh_path == result.model_dir / 'lexicon-zh.txt'
-    assert 'READ_ALONG_TTS_ENGINE=sherpa_onnx_tts' in result.env_text
-    assert f'READ_ALONG_TTS_SHERPA_KOKORO_MODEL={result.model_path}' in result.env_text
-    assert f'READ_ALONG_TTS_SHERPA_KOKORO_VOICES={result.voices_path}' in result.env_text
-    assert f'READ_ALONG_TTS_SHERPA_KOKORO_TOKENS={result.tokens_path}' in result.env_text
-    assert f'READ_ALONG_TTS_SHERPA_KOKORO_DATA_DIR={result.data_dir}' in result.env_text
 
 
 def test_download_kokoro_model_reuses_existing_valid_model(tmp_path: Path) -> None:
@@ -122,6 +118,16 @@ def test_download_kokoro_model_rolls_back_invalid_archive(tmp_path: Path) -> Non
 
     assert not (target / 'kokoro-multi-lang-v1_1').exists()
     assert not any(target.glob('.kokoro-download-*'))
+
+
+def test_download_kokoro_model_rejects_empty_required_file(tmp_path: Path) -> None:
+    archive = make_kokoro_archive(tmp_path, empty_model=True)
+    target = tmp_path / 'models' / 'tts'
+
+    with pytest.raises(ModelDownloadError, match='model.int8.onnx'):
+        download_kokoro_model(target, url=archive.as_uri())
+
+    assert not (target / 'kokoro-multi-lang-v1_1').exists()
 
 
 def test_download_kokoro_model_rejects_archive_without_multilingual_lexicon(

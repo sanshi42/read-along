@@ -9,7 +9,7 @@ Read Along 是一个本地优先的 Python + Web 应用：
 - FastAPI 后端负责导入、材料库、阅读进度、句子音频缓存和 TTS 调度。
 - Vite/React 前端负责书架、阅读页、朗读控制、阅读偏好和浏览器端交互状态。
 - SQLite 数据库保存阅读材料身份、结构化正文、句子音频状态和阅读进度。
-- 本地文件系统保存 PDF 源文件副本、句子音频缓存和可选 TTS 模型。
+- 本地文件系统保存 PDF 源文件副本、句子音频缓存和所选 TTS 模型。
 
 ```mermaid
 flowchart LR
@@ -20,7 +20,7 @@ flowchart LR
     DB["SQLite<br/>六表 schema"]
     Storage["Local Storage<br/>uploads / audio / models"]
     Importers["Importers<br/>URL / PDF"]
-    TTS["TTS Backend<br/>Sherpa ONNX / optional services"]
+    TTS["Sherpa ONNX TTS<br/>内置模型 profile"]
 
     Browser -- "/api/*" --> API
     API --> Library
@@ -35,7 +35,7 @@ flowchart LR
 
 ## 后端运行边界
 
-`read_along.api.create_app()` 创建 FastAPI 应用。`read-along serve` 在启动前初始化本地数据目录和数据库；现有数据库必须匹配当前 schema 或 ADR 明确记录的受限兼容例外。
+`read_along.api.create_app()` 创建 FastAPI 应用。`read-along serve` 在启动前初始化本地数据目录、数据库和所选 TTS 模型；模型缺失时会先记录日志，再同步下载、校验和安装，准备失败则不启动 API。现有数据库必须匹配当前 schema 或 ADR 明确记录的受限兼容例外。
 
 `MaterialLibrary` 是后端领域门面，外部调用者通过它完成：
 
@@ -47,6 +47,12 @@ flowchart LR
 - 删除阅读材料及关联本地文件。
 
 `Repository` 只负责 SQLite 读写。它不承担领域决策，例如重复导入如何处理、音频缓存如何校验、阅读材料详情如何装配。
+
+## 朗读运行边界
+
+Read Along 只使用本地 Sherpa ONNX 朗读引擎。用户通过 `READ_ALONG_TTS_MODEL` 选择代码内置且经过验证的模型 profile；profile 封装下载来源、文件布局和运行类型，用户不直接配置模型文件路径。当前唯一登记的 profile 是 `kokoro-multi-lang-v1_1-int8`，未知 profile 会导致启动失败。
+
+新增朗读模型时，需要增加并验证新的内置 profile；不能把任意模型名称、下载 URL 或文件路径交给运行时猜测。`read-along tts download-model` 使用与服务启动相同的配置和模型准备流程，供提前下载或手动重试使用。
 
 ## 前端运行边界
 
@@ -64,12 +70,12 @@ flowchart LR
 3. `MaterialLibrary.save()` 计算结构化正文 hash 和来源身份。
 4. 已存在相同来源且正文一致时复用材料；相同正文的新来源会关联到已有材料；同一来源正文变化会拒绝覆盖。
 5. 新材料写入 SQLite，PDF 源文件复制到本地 uploads，正文按段落和句子持久化。
-6. 阅读页按句子请求音频；缺失或失效时由 TTS 后端生成并写入 audio 缓存。
+6. 阅读页按句子请求音频；缺失或失效时由所选 Sherpa ONNX 模型生成并写入 audio 缓存。
 7. 当前句、句内位置、播放倍速和朗读完成状态保存为阅读进度。
 
 ## 关键约束
 
 - 不自动迁移未知数据库 schema。
-- 不把用户正文发送给在线服务，除非用户明确配置在线 TTS 后端。
+- 朗读只通过本机 Sherpa ONNX 完成，不提供把用户正文发送给在线 TTS 服务的后端。
 - 音频缓存路径必须保持在本地 audio 根目录内，拒绝符号链接或路径逃逸。
 - 前端不直接访问本地文件系统，所有材料和音频都通过 API 获取。

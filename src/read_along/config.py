@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from read_along.tts.config import TTSConfig, load_tts_config
@@ -14,7 +14,7 @@ class AppConfig:
     """应用运行配置。"""
 
     home: Path
-    tts: TTSConfig = field(default_factory=load_tts_config)
+    tts: TTSConfig | None = None
 
 
 def default_home() -> Path:

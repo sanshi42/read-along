@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0007
+---
+
 # 默认使用本地 Sherpa ONNX TTS
 
 Read Along 不再以 macOS `say` 作为默认朗读引擎，而是默认使用本地 Sherpa ONNX Kokoro 多语种模型，并通过 `.env` 或环境变量切换到其他 TTS 后端。

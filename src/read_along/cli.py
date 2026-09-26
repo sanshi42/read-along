@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib
 import socket
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Iterator, Protocol, cast
 
 import typer
@@ -18,7 +17,13 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 
-from read_along.tts.download import DownloadProgress, ModelDownloadError, download_kokoro_model
+from read_along.config import AppConfig, load_config
+from read_along.storage import StoragePaths
+from read_along.tts.base import TTSBackend
+from read_along.tts.config import TTSConfigurationError
+from read_along.tts.download import DownloadProgress, ModelDownloadError
+from read_along.tts.factory import create_tts_backend
+from read_along.tts.profiles import ensure_model
 
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 8765
@@ -56,9 +61,7 @@ class RichDownloadProgress:
     def start(self, total_bytes: int | None, completed_bytes: int) -> None:
         """创建或重置当前下载任务。"""
         if self._task_id is None:
-            self._task_id = self._progress.add_task(
-                '正在下载 Kokoro 模型', total=total_bytes, completed=completed_bytes
-            )
+            self._task_id = self._progress.add_task('正在下载朗读模型', total=total_bytes, completed=completed_bytes)
             return
         self._progress.update(self._task_id, total=total_bytes, completed=completed_bytes)
 
@@ -77,10 +80,14 @@ class PlainDownloadProgress:
 
     def __init__(self, output: Console) -> None:
         self._console = output
+        self._started = False
 
     def start(self, total_bytes: int | None, completed_bytes: int) -> None:
-        """忽略静态下载进度。"""
+        """首次收到下载进度时写入日志。"""
         del total_bytes, completed_bytes
+        if not self._started:
+            self._console.print('正在下载朗读模型。')
+            self._started = True
 
     def advance(self, completed_bytes: int) -> None:
         """忽略静态下载进度。"""
@@ -98,6 +105,18 @@ def _download_progress_context() -> Iterator[DownloadProgress]:
         return
     with RichDownloadProgress(console) as progress:
         yield progress
+
+
+def _prepare_model(config: AppConfig, *, restart: bool = False) -> TTSBackend:
+    if config.tts is None:
+        raise TTSConfigurationError('朗读配置未加载。')
+    models_root = StoragePaths.from_config(config).models / 'tts'
+    console.print(f'[cyan]正在准备朗读模型：[/cyan] {config.tts.model}')
+    with _download_progress_context() as progress:
+        result = ensure_model(config.tts.model, models_root, restart=restart, progress=progress)
+    backend = create_tts_backend(config.tts, result)
+    console.print(f'[green]朗读模型已就绪：[/green] {result.model_dir}')
+    return backend
 
 
 class UvicornModule(Protocol):
@@ -150,12 +169,14 @@ def serve(
     try:
         _ensure_bind_available(host, port)
         uvicorn = _load_uvicorn()
+        config = load_config()
+        tts_backend = _prepare_model(config)
 
-        # 启动服务前初始化应用状态（存储路径、数据库和 repository）
+        # 启动服务前初始化应用状态（存储路径、数据库、repository 和已校验的朗读引擎）
         from read_along.api import init_app_state
 
-        app_state = init_app_state()
-    except RuntimeError as exc:
+        app_state = init_app_state(config=config, tts=tts_backend)
+    except (RuntimeError, TTSConfigurationError) as exc:
         console.print(f'[red]Read Along 服务启动失败：[/red] {exc}')
         raise typer.Exit(code=1) from exc
 
@@ -167,26 +188,11 @@ def serve(
 
 @tts_app.command('download-model')
 def download_tts_model(
-    model: str = typer.Argument('kokoro', help='要下载的模型 profile，目前支持 kokoro。'),
     restart: bool = typer.Option(False, '--restart', help='删除未完成下载并从头下载。'),
 ) -> None:
-    """下载本地 TTS 模型并输出 `.env` 配置片段。"""
-    if model != 'kokoro':
-        console.print(f'[red]不支持的 TTS 模型 profile：[/red] {model}')
-        raise typer.Exit(code=1)
-    from read_along.config import load_config
-    from read_along.storage import StoragePaths
-
-    config = load_config()
-    paths = StoragePaths.from_config(config)
-    target_dir: Path = paths.models / 'tts'
+    """提前下载或重新下载 `.env` 选择的朗读模型。"""
     try:
-        with _download_progress_context() as progress:
-            result = download_kokoro_model(target_dir, restart=restart, progress=progress)
-    except ModelDownloadError as exc:
+        _prepare_model(load_config(), restart=restart)
+    except (ModelDownloadError, TTSConfigurationError) as exc:
         console.print(f'[red]TTS 模型下载失败：[/red] {exc}')
         raise typer.Exit(code=1) from exc
-
-    console.print(f'[green]Kokoro 模型已就绪：[/green] {result.model_dir}')
-    console.print('请将以下内容写入项目根目录 `.env`：')
-    console.print(result.env_text, soft_wrap=True)

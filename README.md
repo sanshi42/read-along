@@ -2,13 +2,13 @@
 
 Read Along 是一个本地优先的个人 Web App。它把单篇网页或文本型 PDF 转成可边听边读的阅读材料，并提供句子级朗读、同步高亮和断点续读。
 
-项目当前已完成 MVP 核心闭环：单篇导入、材料库、书架、阅读偏好、句子级朗读、高亮、断点续读和多种 TTS 后端已经可用。
+项目当前已完成 MVP 核心闭环：单篇导入、材料库、书架、阅读偏好、句子级朗读、高亮和断点续读已经可用。
 
 ## 产品边界
 
 - 支持单篇网页和文本型 PDF。
-- 默认使用本地 Sherpa ONNX Kokoro 多语种模型生成句子级音频。
-- 正文、音频和阅读进度默认只保存在本机；配置在线 TTS 后端表示允许把句子原文发送给该后端。
+- 使用本地 Sherpa ONNX 朗读引擎生成句子级音频；`.env.example` 提供的默认模型 profile 是 `kokoro-multi-lang-v1_1-int8`。
+- 正文、音频和阅读进度保存在本机；朗读不把句子原文发送给在线 TTS 服务。
 - TTS 输入使用句子原文，不为朗读引擎清理标点或特殊字符。
 - 导入来源适配器不是产品边界；当前优先支持单篇材料。
 - 不保存账号密码、Cookie 或导出的浏览器凭据。
@@ -26,6 +26,36 @@ Read Along 是一个本地优先的个人 Web App。它把单篇网页或文本�
 ```bash
 uv venv
 make setup
+```
+
+首次启动前需要从 `.env.example` 创建项目根目录 `.env`；如果已有 `.env`，请手工合并，不要直接覆盖：
+
+```bash
+cp .env.example .env
+```
+
+以下六项都必须存在且不能为空，代码不提供备用默认值：
+
+```dotenv
+READ_ALONG_API_URL=http://127.0.0.1:8765
+READ_ALONG_TTS_MODEL=kokoro-multi-lang-v1_1-int8
+READ_ALONG_TTS_VOICE_ID=3
+READ_ALONG_TTS_PROVIDER=cpu
+READ_ALONG_TTS_NUM_THREADS=2
+READ_ALONG_TTS_SPEED=1.0
+```
+
+`READ_ALONG_API_URL` 是 Vite 开发服务器转发 `/api` 请求的目标，可以改为另一个非空的 HTTP(S) 地址。当前唯一支持的模型 profile 是 `kokoro-multi-lang-v1_1-int8`；示例中的 `READ_ALONG_TTS_VOICE_ID=3` 对应中文女声 `zf_001`。`PROVIDER`、`NUM_THREADS` 和 `SPEED` 是 Sherpa ONNX 运行参数。缺失、空值或无效配置会让使用该配置的进程启动失败；同名进程环境变量可以临时覆盖 `.env`。
+
+`READ_ALONG_HOME` 不属于 `.env` 配置；需要改变本地数据目录时，应把它作为进程环境变量传入，例如：
+
+```bash
+READ_ALONG_HOME=/path/to/read-along-data uv run read-along serve --reload
+```
+
+配置完成后运行：
+
+```bash
 make dev
 ```
 
@@ -44,40 +74,40 @@ make dev-api
 make dev-web
 ```
 
+或者从仓库根目录在两个终端中直接运行底层命令，不依赖 Make：
+
+```bash
+# 终端 1：FastAPI 后端
+uv run read-along serve --reload
+
+# 终端 2：Vite 前端
+npm run dev --prefix web
+```
+
+后端监听地址可通过 `--host` 和 `--port` 修改；前端可在 npm 命令末尾追加 Vite 的 `--host` 和 `--port`，例如 `npm run dev --prefix web -- --port 5174`。修改后端端口时，也要把 `.env` 中的 `READ_ALONG_API_URL` 改为同一地址。
+
+前端可以单独启动，但导入、材料读取和音频等完整功能仍需要 `READ_ALONG_API_URL` 指向的 API。单独运行 `make dev-api`、`make dev-web` 或上述命令时，同样使用 `Ctrl-C` 停止对应的前台进程。
+
+在 PyCharm、VS Code 或其他 IDE 中可以使用相同的 IDE 无关配置：
+
+| 服务 | 工作目录 | 可执行文件 | 参数 |
+| --- | --- | --- | --- |
+| 后端 | 仓库根目录 | `uv` | `run read-along serve --reload` |
+| 前端 | 仓库根目录 | `npm` | `run dev --prefix web` |
+
+`--reload` 是 `read-along serve` 的普通命令行参数，可以直接填写在 IDE 的参数栏中。若 IDE 提供原生 npm 运行配置，也可以选择 `web/package.json` 的 `dev` script。
+
 ## 本地 TTS 模型
 
-首次使用默认本地 TTS 前，下载 Sherpa ONNX Kokoro 模型并按命令输出填写项目根目录 `.env`：
+后端启动时会检查 `.env` 选择的模型 profile。模型不存在时，后端会先在日志中提示，再同步下载、校验并安装模型；模型准备完成后 API 才开始监听。下载或配置失败会让启动失败，不会静默回退到其他模型。
+
+如果希望在启动后端前完成下载，或手动重试失败的下载，可以运行：
 
 ```bash
-uv run read-along tts download-model kokoro
+uv run read-along tts download-model
 ```
 
-交互终端会显示下载进度；命令重复执行时会安全续传局部归档，并对临时网络错误自动重试 3 次。如需丢弃局部归档并从头下载，使用：
-
-```bash
-uv run read-along tts download-model kokoro --restart
-```
-
-也可以参考 `.env.example` 切换到其他 TTS 后端。进程环境变量优先于 `.env`。
-
-可选 TTS 后端按需安装 extra：
-
-| 后端 | 安装命令 |
-| --- | --- |
-| Edge TTS | `uv sync --extra tts-edge` |
-| OpenAI 兼容 API | `uv sync --extra tts-openai` |
-| Azure Speech | `uv sync --extra tts-azure` |
-| GPT-SoVITS / X-TTS / SiliconFlow / MiniMax HTTP API | `uv sync --extra tts-http` |
-| Piper | `uv sync --extra tts-piper` |
-| pyttsx3 | `uv sync --extra tts-pyttsx3` |
-| CosyVoice / CosyVoice2 / Spark Gradio | `uv sync --extra tts-gradio` |
-| Fish Audio | `uv sync --extra tts-fish` |
-| ElevenLabs | `uv sync --extra tts-elevenlabs` |
-| Cartesia | `uv sync --extra tts-cartesia` |
-| Bark | `uv sync --extra tts-bark` |
-| Coqui TTS | `uv sync --extra tts-coqui` |
-
-MeloTTS 的 PyPI 包当前不能稳定锁定；需要时按 MeloTTS 官方安装方式安装，后端仍使用 `melo.api.TTS`。
+命令读取 `.env` 中的 `READ_ALONG_TTS_MODEL`，与后端启动使用同一套下载和安装流程。当前只登记了 `kokoro-multi-lang-v1_1-int8`；未知 profile 会明确报错。模型文件位置由 profile 管理，不需要在 `.env` 中填写路径。
 
 ## 常用命令
 

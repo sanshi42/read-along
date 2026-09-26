@@ -40,6 +40,9 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --locked --python 3.12
 
+      - name: Create test environment
+        run: cp .env.example .env
+
       - name: Ruff format check
         run: make format-check-python
 
@@ -70,6 +73,9 @@ jobs:
 
       - name: Install web dependencies
         run: npm ci --prefix web
+
+      - name: Create test environment
+        run: cp .env.example .env
 
       - name: Biome format check
         run: make format-check-web
@@ -118,6 +124,9 @@ jobs:
 
       - name: Install web dependencies
         run: npm ci --prefix web
+
+      - name: Create test environment
+        run: cp .env.example .env
 
       - name: Install Chromium
         run: npx --prefix web playwright install --with-deps chromium

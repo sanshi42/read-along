@@ -29,7 +29,7 @@
 | `material_views.py` | 阅读材料摘要、详情、导航和播放位置装配 |
 | `material_audio.py` | 句子音频缓存路径、指纹、读取时长和生成流程 |
 | `importers.py` / `extractors.py` / `browser.py` | URL/PDF 导入和正文提取 |
-| `tts/` | TTS 配置、下载、后端协议和各后端适配器 |
+| `tts/` | Sherpa ONNX 配置与适配、内置模型 profile，以及模型下载、校验和安装 |
 | `sources/` | 特定来源的 URL 支持和正文清洗规则 |
 
 ## 前端模块

@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from read_along import __version__
-from read_along.config import load_config
+from read_along.config import AppConfig, load_config
 from read_along.db import initialize_database
 from read_along.importers import UrlImportError, import_pdf, import_url
 from read_along.material_library import (
@@ -23,6 +23,7 @@ from read_along.material_library import (
 )
 from read_along.models import MaterialDetailResponse, MaterialImportResponse
 from read_along.storage import StoragePaths
+from read_along.tts.base import TTSBackend
 
 
 class UrlImportRequest(BaseModel):
@@ -57,16 +58,16 @@ class AppState:
 _state: AppState | None = None
 
 
-def init_app_state() -> AppState:
+def init_app_state(*, config: AppConfig | None = None, tts: TTSBackend | None = None) -> AppState:
     """初始化并缓存应用运行状态。"""
     global _state
     if _state is not None:
         return _state
-    config = load_config()
+    config = config or load_config()
     storage_paths = StoragePaths.from_config(config)
     storage_paths.ensure_directories()
     initialize_database(storage_paths)
-    material_library = MaterialLibrary(storage_paths)
+    material_library = MaterialLibrary(storage_paths, tts=tts)
     _state = AppState(
         storage_paths=storage_paths,
         material_library=material_library,

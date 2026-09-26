@@ -36,9 +36,6 @@ class FakeSherpaModule:
     class OfflineTtsKokoroModelConfig(SimpleNamespace):
         pass
 
-    class OfflineTtsVitsModelConfig(SimpleNamespace):
-        pass
-
     class OfflineTtsModelConfig(SimpleNamespace):
         pass
 
@@ -76,12 +73,12 @@ def configured_sherpa(tmp_path: Path) -> SherpaOnnxTTSConfig:
         path.write_text('ok', encoding='utf-8')
     data_dir.mkdir()
     return SherpaOnnxTTSConfig(
-        model_type='kokoro',
-        kokoro_model=model,
-        kokoro_voices=voices,
-        kokoro_tokens=tokens,
-        kokoro_data_dir=data_dir,
-        sid=7,
+        profile='kokoro-multi-lang-v1_1-int8',
+        model=model,
+        voices=voices,
+        tokens=tokens,
+        data_dir=data_dir,
+        voice_id=7,
         provider='cpu',
         num_threads=3,
         speed=0.85,
@@ -117,10 +114,10 @@ def test_sherpa_kokoro_builds_expected_offline_config(tmp_path: Path) -> None:
     offline_config = sherpa.created_tts.config
     model_config = offline_config.model
     kokoro_config = model_config.kokoro
-    assert kokoro_config.model == str(config.kokoro_model)
-    assert kokoro_config.voices == str(config.kokoro_voices)
-    assert kokoro_config.tokens == str(config.kokoro_tokens)
-    assert kokoro_config.data_dir == str(config.kokoro_data_dir)
+    assert kokoro_config.model == str(config.model)
+    assert kokoro_config.voices == str(config.voices)
+    assert kokoro_config.tokens == str(config.tokens)
+    assert kokoro_config.data_dir == str(config.data_dir)
     assert kokoro_config.lexicon == (f'{tmp_path / "lexicon-us-en.txt"},{tmp_path / "lexicon-zh.txt"}')
     assert kokoro_config.length_scale == pytest.approx(1 / config.speed)
     assert model_config.provider == 'cpu'
@@ -130,8 +127,11 @@ def test_sherpa_kokoro_builds_expected_offline_config(tmp_path: Path) -> None:
 
 
 def test_sherpa_kokoro_requires_model_paths(tmp_path: Path) -> None:
-    with pytest.raises(TTSConfigurationError, match='READ_ALONG_TTS_SHERPA_KOKORO_MODEL'):
-        SherpaOnnxTTSBackend(SherpaOnnxTTSConfig(kokoro_model=tmp_path / 'missing.onnx'))
+    config = configured_sherpa(tmp_path)
+    config.model.unlink()
+
+    with pytest.raises(TTSConfigurationError, match='model.onnx'):
+        SherpaOnnxTTSBackend(config)
 
 
 def test_sherpa_kokoro_requires_multilingual_lexicons(tmp_path: Path) -> None:
@@ -151,6 +151,20 @@ def test_sherpa_rejects_invalid_runtime_config(tmp_path: Path) -> None:
 
     with pytest.raises(TTSConfigurationError, match='Sherpa ONNX TTS 配置无效'):
         SherpaOnnxTTSBackend(configured_sherpa(tmp_path), sherpa_module=sherpa, soundfile_module=FakeSoundFileModule())
+
+
+def test_sherpa_reports_model_loading_failure_as_configuration_error(tmp_path: Path) -> None:
+    class BrokenSherpa(FakeSherpaModule):
+        def OfflineTts(self, config: object) -> FakeOfflineTts:  # noqa: N802
+            del config
+            raise RuntimeError('invalid onnx')
+
+    with pytest.raises(TTSConfigurationError, match='无法加载 Sherpa ONNX TTS 模型'):
+        SherpaOnnxTTSBackend(
+            configured_sherpa(tmp_path),
+            sherpa_module=BrokenSherpa(),
+            soundfile_module=FakeSoundFileModule(),
+        )
 
 
 def test_sherpa_reports_empty_audio(tmp_path: Path) -> None:

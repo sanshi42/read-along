@@ -24,36 +24,21 @@ class SherpaOnnxTTSBackend:
     ) -> None:
         self.config = config
         self._validate_model_paths()
-        self._kokoro_lexicon = _kokoro_lexicon(config) if config.model_type == 'kokoro' else None
+        self._kokoro_lexicon = _kokoro_lexicon(config)
         self._sherpa = sherpa_module or _import_required('sherpa_onnx', 'sherpa-onnx')
         self._soundfile = soundfile_module or _import_required('soundfile', 'soundfile')
         self._tts = self._build_tts()
 
     def fingerprint_parts(self) -> tuple[str, ...]:
-        if self.config.model_type == 'kokoro':
-            return (
-                self.engine_id,
-                'kokoro',
-                str(self.config.kokoro_model),
-                str(self.config.kokoro_voices),
-                str(self.config.kokoro_tokens),
-                str(self.config.kokoro_data_dir),
-                str(self._kokoro_lexicon),
-                str(self.config.sid),
-                self.config.provider,
-                f'{self.config.speed:g}',
-                self.audio_format,
-            )
         return (
             self.engine_id,
-            'vits',
-            str(self.config.vits_model),
-            str(self.config.vits_lexicon),
-            str(self.config.vits_tokens),
-            str(self.config.vits_data_dir),
-            str(self.config.vits_dict_dir),
-            str(self.config.tts_rule_fsts),
-            str(self.config.sid),
+            self.config.profile,
+            str(self.config.model),
+            str(self.config.voices),
+            str(self.config.tokens),
+            str(self.config.data_dir),
+            self._kokoro_lexicon,
+            str(self.config.voice_id),
             self.config.provider,
             f'{self.config.speed:g}',
             self.audio_format,
@@ -71,7 +56,7 @@ class SherpaOnnxTTSBackend:
             raise TTSGenerationError(f'目标音频父目录不存在或不是目录：{output_path.parent}')
 
         try:
-            audio = self._tts.generate(text, sid=self.config.sid, speed=self.config.speed)
+            audio = self._tts.generate(text, sid=self.config.voice_id, speed=self.config.speed)
         except Exception as exc:
             raise TTSGenerationError(f'Sherpa ONNX TTS 生成音频失败：{exc}') from exc
         if len(audio.samples) == 0:
@@ -90,84 +75,62 @@ class SherpaOnnxTTSBackend:
 
     def _build_tts(self) -> Any:
         offline_config = self._offline_config()
-        if not offline_config.validate():
+        try:
+            valid = offline_config.validate()
+        except Exception as exc:
+            raise TTSConfigurationError(f'无法校验 Sherpa ONNX TTS 模型：{exc}') from exc
+        if not valid:
             raise TTSConfigurationError('Sherpa ONNX TTS 配置无效。')
-        return self._sherpa.OfflineTts(offline_config)
+        try:
+            return self._sherpa.OfflineTts(offline_config)
+        except Exception as exc:
+            raise TTSConfigurationError(f'无法加载 Sherpa ONNX TTS 模型：{exc}') from exc
 
     def _validate_model_paths(self) -> None:
-        if self.config.model_type == 'kokoro':
-            _required_path(self.config.kokoro_model, 'READ_ALONG_TTS_SHERPA_KOKORO_MODEL')
-            _required_path(self.config.kokoro_voices, 'READ_ALONG_TTS_SHERPA_KOKORO_VOICES')
-            _required_path(self.config.kokoro_tokens, 'READ_ALONG_TTS_SHERPA_KOKORO_TOKENS')
-            _required_path(self.config.kokoro_data_dir, 'READ_ALONG_TTS_SHERPA_KOKORO_DATA_DIR')
-        else:
-            _required_path(self.config.vits_model, 'READ_ALONG_TTS_SHERPA_VITS_MODEL')
-            _required_path(self.config.vits_tokens, 'READ_ALONG_TTS_SHERPA_VITS_TOKENS')
+        _required_path(self.config.model)
+        _required_path(self.config.voices)
+        _required_path(self.config.tokens)
+        _required_path(self.config.data_dir)
 
     def _offline_config(self) -> Any:
-        if self.config.model_type == 'kokoro':
-            model = _required_path(self.config.kokoro_model, 'READ_ALONG_TTS_SHERPA_KOKORO_MODEL')
-            voices = _required_path(self.config.kokoro_voices, 'READ_ALONG_TTS_SHERPA_KOKORO_VOICES')
-            tokens = _required_path(self.config.kokoro_tokens, 'READ_ALONG_TTS_SHERPA_KOKORO_TOKENS')
-            data_dir = _required_path(self.config.kokoro_data_dir, 'READ_ALONG_TTS_SHERPA_KOKORO_DATA_DIR')
-            kokoro_config = self._sherpa.OfflineTtsKokoroModelConfig(
-                model=str(model),
-                voices=str(voices),
-                tokens=str(tokens),
-                data_dir=str(data_dir),
-                lexicon=str(self._kokoro_lexicon),
-                length_scale=1 / self.config.speed,
-            )
-            model_config = self._sherpa.OfflineTtsModelConfig(
-                kokoro=kokoro_config,
-                provider=self.config.provider,
-                num_threads=self.config.num_threads,
-                debug=self.config.debug,
-            )
-        else:
-            model = _required_path(self.config.vits_model, 'READ_ALONG_TTS_SHERPA_VITS_MODEL')
-            tokens = _required_path(self.config.vits_tokens, 'READ_ALONG_TTS_SHERPA_VITS_TOKENS')
-            vits_config = self._sherpa.OfflineTtsVitsModelConfig(
-                model=str(model),
-                lexicon=str(self.config.vits_lexicon or ''),
-                tokens=str(tokens),
-                data_dir=str(self.config.vits_data_dir or ''),
-                dict_dir=str(self.config.vits_dict_dir or ''),
-                length_scale=1 / self.config.speed,
-            )
-            model_config = self._sherpa.OfflineTtsModelConfig(
-                vits=vits_config,
-                provider=self.config.provider,
-                num_threads=self.config.num_threads,
-                debug=self.config.debug,
-            )
+        kokoro_config = self._sherpa.OfflineTtsKokoroModelConfig(
+            model=str(_required_path(self.config.model)),
+            voices=str(_required_path(self.config.voices)),
+            tokens=str(_required_path(self.config.tokens)),
+            data_dir=str(_required_path(self.config.data_dir)),
+            lexicon=self._kokoro_lexicon,
+            length_scale=1 / self.config.speed,
+        )
+        model_config = self._sherpa.OfflineTtsModelConfig(
+            kokoro=kokoro_config,
+            provider=self.config.provider,
+            num_threads=self.config.num_threads,
+            debug=self.config.debug,
+        )
         try:
             model_config.sherpa_module = self._sherpa
         except AttributeError:
             pass
         return self._sherpa.OfflineTtsConfig(
             model=model_config,
-            rule_fsts=self.config.tts_rule_fsts or '',
             max_num_sentences=1,
         )
 
 
-def _required_path(path: Path | None, variable_name: str) -> Path:
-    if path is None:
-        raise TTSConfigurationError(f'{variable_name} 未配置。')
+def _required_path(path: Path) -> Path:
     if not path.exists():
-        raise TTSConfigurationError(f'{variable_name} 指向的路径不存在：{path}')
+        raise TTSConfigurationError(f'朗读模型资源路径不存在：{path}')
     return path
 
 
 def _kokoro_lexicon(config: SherpaOnnxTTSConfig) -> str:
-    model = _required_path(config.kokoro_model, 'READ_ALONG_TTS_SHERPA_KOKORO_MODEL')
+    model = _required_path(config.model)
     lexicon_paths = (
         model.parent / 'lexicon-us-en.txt',
         model.parent / 'lexicon-zh.txt',
     )
     for path in lexicon_paths:
-        _required_path(path, f'Kokoro 多语种词典 {path.name}')
+        _required_path(path)
     return ','.join(str(path) for path in lexicon_paths)
 
 

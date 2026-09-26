@@ -96,19 +96,39 @@ test-web:
 test-web-smoke:
 	@set -eu; \
 	tmp_home=$$(mktemp -d); \
-	READ_ALONG_HOME=$$tmp_home uv run read-along serve --host 127.0.0.1 --port 8765 & \
+	api_log=$$tmp_home/api.log; \
+	web_log=$$tmp_home/web.log; \
+	READ_ALONG_HOME="$$tmp_home" uv run uvicorn read_along.api:app --host 127.0.0.1 --port 8765 >"$$api_log" 2>&1 & \
 	api_pid=$$!; \
-	npm run dev --prefix web -- --host 127.0.0.1 > /tmp/read-along-vite-smoke.log 2>&1 & \
+	npm run dev --prefix web -- --host 127.0.0.1 >"$$web_log" 2>&1 & \
 	web_pid=$$!; \
-	cleanup() { kill $$api_pid $$web_pid 2>/dev/null || true; rm -rf "$$tmp_home"; }; \
-	trap cleanup INT TERM EXIT; \
+	cleanup() { \
+		trap - INT TERM EXIT; \
+		kill $$api_pid $$web_pid 2>/dev/null || true; \
+		wait $$api_pid 2>/dev/null || true; \
+		wait $$web_pid 2>/dev/null || true; \
+		rm -rf "$$tmp_home"; \
+	}; \
+	trap 'cleanup; exit 130' INT; \
+	trap 'cleanup; exit 143' TERM; \
+	trap cleanup EXIT; \
 	for i in $$(seq 1 60); do \
+		if ! kill -0 $$api_pid 2>/dev/null; then \
+			echo "Read Along smoke API stopped before becoming ready"; \
+			cat "$$api_log" 2>/dev/null || true; \
+			exit 1; \
+		fi; \
+		if ! kill -0 $$web_pid 2>/dev/null; then \
+			echo "Read Along smoke web server stopped before becoming ready"; \
+			cat "$$web_log" 2>/dev/null || true; \
+			exit 1; \
+		fi; \
 		if curl -fsS http://127.0.0.1:8765/api/health >/dev/null 2>&1 && curl -fsS http://127.0.0.1:5173 >/dev/null 2>&1; then \
 			break; \
 		fi; \
 		if [ $$i -eq 60 ]; then \
 			echo "Read Along smoke servers did not become ready"; \
-			cat /tmp/read-along-vite-smoke.log 2>/dev/null || true; \
+			cat "$$api_log" "$$web_log" 2>/dev/null || true; \
 			exit 1; \
 		fi; \
 		sleep 1; \

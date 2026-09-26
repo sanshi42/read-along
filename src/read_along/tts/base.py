@@ -31,7 +31,7 @@ class CachedAudio:
 
 
 class TTSBackend(Protocol):
-    """可替换朗读引擎的最小协议。"""
+    """材料库生成句子音频所需的最小协议。"""
 
     engine_id: str
     audio_format: AudioFormat

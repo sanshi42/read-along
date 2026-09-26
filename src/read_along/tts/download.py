@@ -65,24 +65,6 @@ class KokoroModelPaths:
         """返回默认模型的中文词典路径。"""
         return self.model_dir / 'lexicon-zh.txt'
 
-    @property
-    def env_text(self) -> str:
-        """返回应写入 `.env` 的配置片段。"""
-        return '\n'.join(
-            [
-                'READ_ALONG_TTS_ENGINE=sherpa_onnx_tts',
-                'READ_ALONG_TTS_SHERPA_MODEL_TYPE=kokoro',
-                f'READ_ALONG_TTS_SHERPA_KOKORO_MODEL={self.model_path}',
-                f'READ_ALONG_TTS_SHERPA_KOKORO_VOICES={self.voices_path}',
-                f'READ_ALONG_TTS_SHERPA_KOKORO_TOKENS={self.tokens_path}',
-                f'READ_ALONG_TTS_SHERPA_KOKORO_DATA_DIR={self.data_dir}',
-                'READ_ALONG_TTS_SHERPA_PROVIDER=cpu',
-                'READ_ALONG_TTS_SHERPA_NUM_THREADS=2',
-                'READ_ALONG_TTS_SHERPA_SPEED=1.0',
-                'READ_ALONG_TTS_SHERPA_SID=0',
-            ]
-        )
-
 
 def download_kokoro_model(
     target_dir: Path,
@@ -315,32 +297,32 @@ def _model_paths(model_dir: Path) -> KokoroModelPaths:
 
 
 def _is_valid(paths: KokoroModelPaths) -> bool:
-    return (
-        paths.model_path.is_file()
-        and paths.voices_path.is_file()
-        and paths.tokens_path.is_file()
-        and paths.lexicon_us_en_path.is_file()
-        and paths.lexicon_zh_path.is_file()
-        and paths.data_dir.is_dir()
-    )
+    return not _invalid_model_resources(paths)
 
 
 def _validate(paths: KokoroModelPaths) -> None:
-    missing: list[str] = []
-    if not paths.model_path.is_file():
-        missing.append('model.int8.onnx')
-    if not paths.voices_path.is_file():
-        missing.append('voices.bin')
-    if not paths.tokens_path.is_file():
-        missing.append('tokens.txt')
-    if not paths.lexicon_us_en_path.is_file():
-        missing.append('lexicon-us-en.txt')
-    if not paths.lexicon_zh_path.is_file():
-        missing.append('lexicon-zh.txt')
-    if not paths.data_dir.is_dir():
-        missing.append('espeak-ng-data')
-    if missing:
-        raise ModelDownloadError(f'Kokoro 模型缺少必要文件：{", ".join(missing)}')
+    invalid = _invalid_model_resources(paths)
+    if invalid:
+        raise ModelDownloadError(f'Kokoro 模型资源缺失或为空：{", ".join(invalid)}')
+
+
+def _invalid_model_resources(paths: KokoroModelPaths) -> list[str]:
+    invalid = [
+        name
+        for name, path in (
+            ('model.int8.onnx', paths.model_path),
+            ('voices.bin', paths.voices_path),
+            ('tokens.txt', paths.tokens_path),
+            ('lexicon-us-en.txt', paths.lexicon_us_en_path),
+            ('lexicon-zh.txt', paths.lexicon_zh_path),
+        )
+        if not path.is_file() or path.stat().st_size == 0
+    ]
+    if not paths.data_dir.is_dir() or not any(
+        child.is_file() and child.stat().st_size > 0 for child in paths.data_dir.rglob('*')
+    ):
+        invalid.append('espeak-ng-data')
+    return invalid
 
 
 def _find_extracted_root(extract_dir: Path) -> Path:

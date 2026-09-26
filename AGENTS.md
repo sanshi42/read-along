@@ -5,7 +5,7 @@
 - Read Along 是本地优先的个人 Web App，把单篇网页或文本型 PDF 转成可朗读、可断点续读的阅读材料。
 - 后端使用 Python 3.12、FastAPI、Typer、SQLModel、SQLite 和 uv。
 - 前端使用 React 19、Vite、TypeScript、React Router、lucide-react 和 npm。
-- 默认本地 TTS 后端是 Sherpa ONNX Kokoro；在线 TTS 只作为用户显式配置的可选后端。
+- 朗读引擎固定为本地 Sherpa ONNX；用户通过内置模型 profile 选择已验证的朗读模型。
 
 ## 常用命令
 
@@ -32,7 +32,7 @@ make pre-commit     # 全量运行 pre-commit
 | `src/read_along/material_audio.py` | 句子音频缓存和生成流程 |
 | `src/read_along/repository.py` | SQLite repository |
 | `src/read_along/importers.py` | URL/PDF 导入入口 |
-| `src/read_along/tts/` | TTS 配置、下载和后端适配器 |
+| `src/read_along/tts/` | Sherpa ONNX 配置、内置模型 profile、下载和适配 |
 | `web/src/api.ts` | 前端 API 类型和 fetch 封装 |
 | `web/src/routes/ReaderPage.tsx` | 阅读页页面组合，当前前端架构热点 |
 | `web/src/routes/readerPlaybackSession.ts` | 阅读页临时朗读状态机 |
