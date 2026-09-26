@@ -1,4 +1,4 @@
-.PHONY: setup dev dev-api dev-web check check-browser format format-check format-check-python format-check-web lint lint-python lint-web typecheck test test-python test-web test-web-smoke build build-web hooks pre-commit
+.PHONY: setup dev dev-stop dev-api dev-web check check-browser format format-check format-check-python format-check-web lint lint-python lint-web typecheck test test-python test-web test-web-smoke build build-web hooks pre-commit
 
 setup:
 	uv sync
@@ -6,11 +6,50 @@ setup:
 	uv run pre-commit install
 
 dev:
-	@set -eu; \
+	@set -u; \
 	uv run read-along serve --reload & \
 	api_pid=$$!; \
-	trap 'kill $$api_pid 2>/dev/null || true' INT TERM EXIT; \
-	npm run dev --prefix web
+	npm run dev --prefix web & \
+	web_pid=$$!; \
+	cleanup() { \
+		trap - INT TERM EXIT; \
+		kill $$api_pid $$web_pid 2>/dev/null || true; \
+		wait $$api_pid 2>/dev/null || true; \
+		wait $$web_pid 2>/dev/null || true; \
+	}; \
+	trap 'cleanup; exit 130' INT; \
+	trap 'cleanup; exit 143' TERM; \
+	trap cleanup EXIT; \
+	while :; do \
+		if ! kill -0 $$api_pid 2>/dev/null; then exited_pid=$$api_pid; break; fi; \
+		if ! kill -0 $$web_pid 2>/dev/null; then exited_pid=$$web_pid; break; fi; \
+		sleep 1; \
+	done; \
+	status=0; \
+	wait $$exited_pid || status=$$?; \
+	cleanup; \
+	exit $$status
+
+dev-stop:
+	@project_dir=$$(pwd -P); stopped=0; \
+	candidates=$$(pgrep -u "$$(id -u)" -f '(^|/)make dev$$'); status=$$?; \
+	if [ "$$status" -gt 1 ]; then echo "无法读取进程列表。" >&2; exit "$$status"; fi; \
+	for pid in $$candidates; do \
+		process_command=$$(ps -ww -p "$$pid" -o command= 2>/dev/null); \
+		process_name=$${process_command%% *}; \
+		process_name=$${process_name##*/}; \
+		process_args=$${process_command#* }; \
+		process_dir=$$(lsof -a -p "$$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'); \
+		if [ "$$process_name" = make ] && [ "$$process_args" = dev ] && [ "$$process_dir" = "$$project_dir" ]; then \
+			kill -TERM "$$pid" || exit 1; \
+			stopped=1; \
+		fi; \
+	done; \
+	if [ "$$stopped" -eq 1 ]; then \
+		echo "已向 Read Along 开发服务发送停止信号。"; \
+	else \
+		echo "没有运行中的 Read Along 开发服务。"; \
+	fi
 
 dev-api:
 	uv run read-along serve --reload

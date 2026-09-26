@@ -35,6 +35,8 @@ make dev
 - Web: `http://127.0.0.1:5173`
 - 健康检查：`GET /api/health`
 
+两个服务都会保持在前台运行。在执行 `make dev` 的终端按 `Ctrl-C`，Make 会同时关闭前端和后端；找不到原终端时，可在仓库目录运行 `make dev-stop`。任一服务启动失败或意外退出时，另一服务也会被清理。
+
 也可以分别启动：
 
 ```bash
@@ -83,6 +85,7 @@ MeloTTS 的 PyPI 包当前不能稳定锁定；需要时按 MeloTTS 官方安装
 | --- | --- |
 | `make setup` | 安装 Python、Web 依赖并安装 pre-commit hook |
 | `make dev` | 同时启动 FastAPI 和 Vite 开发服务器 |
+| `make dev-stop` | 停止当前仓库由 `make dev` 启动的服务 |
 | `make check` | 运行本地快速完整门禁 |
 | `make check-browser` | 启动真实后端和前端并运行浏览器烟测 |
 | `make format` | 格式化 Python 和渐进式 Web 文件 |
