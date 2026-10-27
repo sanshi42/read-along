@@ -27,13 +27,13 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v9.0.0
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           enable-cache: true
           version: 0.8.13
 
       - name: Set up Python
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.12"
 
@@ -65,7 +65,7 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
           cache: npm
@@ -102,13 +102,13 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v9.0.0
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           enable-cache: true
           version: 0.8.13
 
       - name: Set up Python
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.12"
 
@@ -116,7 +116,7 @@ jobs:
         run: uv sync --locked --python 3.12
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
           cache: npm
